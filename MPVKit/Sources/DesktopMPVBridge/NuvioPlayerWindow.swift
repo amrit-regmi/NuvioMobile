@@ -221,6 +221,7 @@ final class NuvioPlayerWindow {
     private func syncStateFromMPV() {
         guard mpvView != nil, mpvView.mpv != nil else { return }
         mpvView.refreshPlaybackState()
+        mpvView.refreshTracks()
         state.isLoading = mpvView.isPlayerLoading
         state.isPlaying = mpvView.isPlayerPlaying
         state.isEnded = mpvView.isPlayerEnded

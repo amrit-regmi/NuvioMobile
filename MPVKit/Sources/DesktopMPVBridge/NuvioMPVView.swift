@@ -179,6 +179,8 @@ final class NuvioMPVView: NSOpenGLView {
         guard mpv != nil else { return }
         var id = Int64(trackId)
         mpv_set_property(mpv, "aid", MPV_FORMAT_INT64, &id)
+        refreshTracks()
+        onStateChanged?()
     }
 
     func selectSubtitle(_ trackId: Int) {
@@ -189,11 +191,15 @@ final class NuvioMPVView: NSOpenGLView {
             var id = Int64(trackId)
             mpv_set_property(mpv, "sid", MPV_FORMAT_INT64, &id)
         }
+        refreshTracks()
+        onStateChanged?()
     }
 
     func addSubtitleUrl(_ url: String) {
         guard mpv != nil else { return }
         command("sub-add", args: [url, "select"])
+        refreshTracks()
+        onStateChanged?()
     }
 
     func removeExternalSubtitles() {
@@ -208,6 +214,8 @@ final class NuvioMPVView: NSOpenGLView {
             }
         }
         checkError(mpv_set_option_string(mpv, "sid", "no"))
+        refreshTracks()
+        onStateChanged?()
     }
 
     func removeExternalSubtitlesAndSelect(_ trackId: Int) {
@@ -226,6 +234,8 @@ final class NuvioMPVView: NSOpenGLView {
         } else {
             checkError(mpv_set_option_string(mpv, "sid", "no"))
         }
+        refreshTracks()
+        onStateChanged?()
     }
 
     private var pendingSubStyle: (String, Float, Float, Int)?
