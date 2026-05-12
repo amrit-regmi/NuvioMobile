@@ -18,6 +18,7 @@ import nuvio.composeapp.generated.resources.mdblist_logo
 import nuvio.composeapp.generated.resources.rating_tmdb
 import nuvio.composeapp.generated.resources.trakt_tv_favicon
 import org.jetbrains.compose.resources.painterResource
+import java.util.Locale
 
 internal actual object ThemeSettingsStorage {
     private const val preferencesName = "nuvio_theme_settings"
@@ -65,7 +66,13 @@ internal actual object ThemeSettingsStorage {
         DesktopPreferences.putString(preferencesName, selectedAppLanguageKey, languageCode)
     }
 
-    actual fun applySelectedAppLanguage(languageCode: String) = Unit
+    actual fun applySelectedAppLanguage(languageCode: String) {
+        val normalizedCode = languageCode
+            .trim()
+            .takeIf { it.isNotBlank() }
+            ?: AppLanguage.ENGLISH.code
+        Locale.setDefault(Locale.forLanguageTag(normalizedCode))
+    }
 
     actual fun exportToSyncPayload(): JsonObject = buildJsonObject {
         loadSelectedTheme()?.let { put(selectedThemeKey, encodeSyncString(it)) }
@@ -76,7 +83,9 @@ internal actual object ThemeSettingsStorage {
 
     actual fun replaceFromSyncPayload(payload: JsonObject) {
         profileScopedSyncKeys.forEach { DesktopPreferences.remove(preferencesName, ProfileScopedKey.of(it)) }
-        globalSyncKeys.forEach { DesktopPreferences.remove(preferencesName, it) }
+        globalSyncKeys
+            .filter(payload::containsKey)
+            .forEach { DesktopPreferences.remove(preferencesName, it) }
 
         payload.decodeSyncString(selectedThemeKey)?.let(::saveSelectedTheme)
         payload.decodeSyncBoolean(amoledEnabledKey)?.let(::saveAmoledEnabled)
