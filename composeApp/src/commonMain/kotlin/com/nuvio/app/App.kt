@@ -39,6 +39,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -60,6 +61,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavBackStackEntry
+import androidx.navigation.NavController
+import androidx.navigation.NavDestination.Companion.hasRoute
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -70,6 +73,7 @@ import coil3.ImageLoader
 import coil3.compose.setSingletonImageLoaderFactory
 import coil3.request.CachePolicy
 import coil3.request.crossfade
+import coil3.svg.SvgDecoder
 import com.nuvio.app.core.build.AppFeaturePolicy
 import com.nuvio.app.core.auth.AuthRepository
 import com.nuvio.app.core.auth.AuthState
@@ -92,6 +96,11 @@ import com.nuvio.app.core.ui.NuvioToastController
 import com.nuvio.app.core.ui.NuvioFloatingPrompt
 import com.nuvio.app.core.ui.TraktListPickerDialog
 import com.nuvio.app.core.ui.NuvioTheme
+import com.nuvio.app.core.ui.LocalNuvioBottomNavigationOverlayPadding
+import com.nuvio.app.core.ui.NativeNavigationTab
+import com.nuvio.app.core.ui.NativeTabBridge
+import com.nuvio.app.core.ui.isLiquidGlassNativeTabBarSupported
+import com.nuvio.app.core.ui.localizedContinueWatchingSubtitle
 import com.nuvio.app.features.auth.AuthScreen
 import com.nuvio.app.features.addons.AddonRepository
 import com.nuvio.app.features.catalog.CatalogRepository
@@ -121,11 +130,13 @@ import com.nuvio.app.features.player.PlayerRoute
 import com.nuvio.app.features.player.PlayerScreen
 import com.nuvio.app.features.player.sanitizePlaybackHeaders
 import com.nuvio.app.features.player.sanitizePlaybackResponseHeaders
+import com.nuvio.app.features.profiles.AvatarRepository
 import com.nuvio.app.features.profiles.NuvioProfile
 import com.nuvio.app.features.profiles.ProfileEditScreen
 import com.nuvio.app.features.profiles.ProfileRepository
 import com.nuvio.app.features.profiles.ProfileSelectionScreen
 import com.nuvio.app.features.profiles.ProfileSwitcherTab
+import com.nuvio.app.features.profiles.profileAvatarImageUrl
 import com.nuvio.app.features.search.SearchScreen
 import com.nuvio.app.features.settings.SettingsScreen
 import com.nuvio.app.features.settings.HomescreenSettingsScreen
@@ -135,6 +146,7 @@ import com.nuvio.app.features.settings.AddonsSettingsScreen
 import com.nuvio.app.features.settings.PluginsSettingsScreen
 import com.nuvio.app.features.settings.AccountSettingsScreen
 import com.nuvio.app.features.settings.SupportersContributorsSettingsScreen
+import com.nuvio.app.features.settings.LicensesAttributionsSettingsScreen
 import com.nuvio.app.features.settings.ThemeSettingsRepository
 import com.nuvio.app.features.collection.CollectionManagementScreen
 import com.nuvio.app.features.collection.CollectionEditorScreen
@@ -151,8 +163,6 @@ import com.nuvio.app.features.streams.StreamsRepository
 import com.nuvio.app.features.streams.StreamsScreen
 import com.nuvio.app.features.tmdb.TmdbService
 import com.nuvio.app.features.player.PlayerSettingsRepository
-import com.nuvio.app.features.trakt.TraktAuthRepository
-import com.nuvio.app.features.trakt.TraktConnectionMode
 import com.nuvio.app.features.trakt.TraktListTab
 import com.nuvio.app.features.updater.AppUpdaterHost
 import com.nuvio.app.features.updater.rememberAppUpdaterController
@@ -167,12 +177,20 @@ import com.nuvio.app.features.watching.application.WatchingState
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
-import nuvio.composeapp.generated.resources.Res
+import nuvio.composeapp.generated.resources.*
 import nuvio.composeapp.generated.resources.app_logo_wordmark
+import nuvio.composeapp.generated.resources.compose_catalog_subtitle_library
+import nuvio.composeapp.generated.resources.compose_catalog_subtitle_trakt_library
+import nuvio.composeapp.generated.resources.compose_nav_home
+import nuvio.composeapp.generated.resources.compose_nav_library
+import nuvio.composeapp.generated.resources.compose_nav_profile
+import nuvio.composeapp.generated.resources.compose_nav_search
 import nuvio.composeapp.generated.resources.sidebar_library
 import nuvio.composeapp.generated.resources.sidebar_search
 import org.jetbrains.compose.resources.DrawableResource
+import org.jetbrains.compose.resources.getString
 import org.jetbrains.compose.resources.painterResource
+import org.jetbrains.compose.resources.stringResource
 
 @Serializable
 object TabsRoute
@@ -222,6 +240,9 @@ object AccountSettingsRoute
 object SupportersContributorsSettingsRoute
 
 @Serializable
+object LicensesAttributionsSettingsRoute
+
+@Serializable
 object CollectionsRoute
 
 @Serializable
@@ -253,6 +274,20 @@ enum class AppScreenTab {
     Settings,
 }
 
+private fun AppScreenTab.toNativeNavigationTab(): NativeNavigationTab = when (this) {
+    AppScreenTab.Home -> NativeNavigationTab.Home
+    AppScreenTab.Search -> NativeNavigationTab.Search
+    AppScreenTab.Library -> NativeNavigationTab.Library
+    AppScreenTab.Settings -> NativeNavigationTab.Settings
+}
+
+private fun NativeNavigationTab.toAppScreenTab(): AppScreenTab = when (this) {
+    NativeNavigationTab.Home -> AppScreenTab.Home
+    NativeNavigationTab.Search -> AppScreenTab.Search
+    NativeNavigationTab.Library -> AppScreenTab.Library
+    NativeNavigationTab.Settings -> AppScreenTab.Settings
+}
+
 private enum class AppGateScreen {
     Loading,
     Auth,
@@ -270,6 +305,9 @@ fun App() {
             .crossfade(true)
             .diskCachePolicy(CachePolicy.ENABLED)
             .memoryCachePolicy(CachePolicy.ENABLED)
+            .components {
+                add(SvgDecoder.Factory())
+            }
             .configurePlatformImageLoader()
             .build()
     }
@@ -278,7 +316,6 @@ fun App() {
         ThemeSettingsRepository.selectedTheme
     }.collectAsStateWithLifecycle()
     val amoledEnabled by remember { ThemeSettingsRepository.amoledEnabled }.collectAsStateWithLifecycle()
-
     NuvioTheme(appTheme = selectedTheme, amoled = amoledEnabled) {
         LaunchedEffect(Unit) {
             AuthRepository.initialize()
@@ -287,13 +324,36 @@ fun App() {
         LaunchedEffect(Unit) {
             NetworkStatusRepository.ensureStarted()
             ProfileRepository.loadCachedProfiles()
+            AvatarRepository.fetchAvatars()
         }
 
         val authState by AuthRepository.state.collectAsStateWithLifecycle()
         val profileState by ProfileRepository.state.collectAsStateWithLifecycle()
+        val profileAvatars by AvatarRepository.avatars.collectAsStateWithLifecycle()
         val networkStatusUiState by remember {
             NetworkStatusRepository.uiState
         }.collectAsStateWithLifecycle()
+
+        LaunchedEffect(
+            profileState.activeProfile?.profileIndex,
+            profileState.activeProfile?.name,
+            profileState.activeProfile?.avatarColorHex,
+            profileState.activeProfile?.avatarId,
+            profileState.activeProfile?.avatarUrl,
+            profileAvatars,
+        ) {
+            val activeProfile = profileState.activeProfile
+            val avatarItem = activeProfile?.avatarId?.let { avatarId ->
+                profileAvatars.find { it.id == avatarId }
+            }
+            NativeTabBridge.publishProfileTabIcon(
+                name = activeProfile?.name,
+                avatarColorHex = activeProfile?.avatarColorHex,
+                avatarImageUrl = activeProfile?.let { profileAvatarImageUrl(it, avatarItem) },
+                avatarBackgroundColorHex = avatarItem?.bgColor,
+            )
+        }
+
         var gateScreen by rememberSaveable { mutableStateOf(AppGateScreen.Loading.name) }
         var editingProfile by remember { mutableStateOf<NuvioProfile?>(null) }
         var isNewProfile by remember { mutableStateOf(false) }
@@ -460,6 +520,12 @@ private fun MainAppContent(
         val hapticFeedback = LocalHapticFeedback.current
         val coroutineScope = rememberCoroutineScope()
         var selectedTab by rememberSaveable { mutableStateOf(AppScreenTab.Home) }
+        val currentBackStackEntry by navController.currentBackStackEntryAsState()
+        val nativeRequestedTab by remember { NativeTabBridge.requestedTab }.collectAsStateWithLifecycle()
+        val liquidGlassNativeTabBarEnabled by remember {
+            ThemeSettingsRepository.liquidGlassNativeTabBarEnabled
+        }.collectAsStateWithLifecycle()
+        val liquidGlassNativeTabBarSupported = remember { isLiquidGlassNativeTabBarSupported() }
         var showExitConfirmation by rememberSaveable { mutableStateOf(false) }
         var selectedPosterForActions by remember { mutableStateOf<MetaPreview?>(null) }
         var selectedContinueWatchingForActions by remember { mutableStateOf<ContinueWatchingItem?>(null) }
@@ -478,10 +544,6 @@ private fun MainAppContent(
             LibraryRepository.ensureLoaded()
             LibraryRepository.uiState
         }.collectAsStateWithLifecycle()
-        val traktAuthUiState by remember {
-            TraktAuthRepository.ensureLoaded()
-            TraktAuthRepository.uiState
-        }.collectAsStateWithLifecycle()
         val authState by AuthRepository.state.collectAsStateWithLifecycle()
         val profileState by ProfileRepository.state.collectAsStateWithLifecycle()
     val playerSettingsUiState by remember {
@@ -499,7 +561,8 @@ private fun MainAppContent(
     val networkStatusUiState by remember {
         NetworkStatusRepository.uiState
     }.collectAsStateWithLifecycle()
-    val isTraktConnected = traktAuthUiState.mode == TraktConnectionMode.CONNECTED
+    val downloadedProviderLabel = stringResource(Res.string.provider_downloaded)
+    val isTraktLibrarySource = libraryUiState.sourceMode == LibrarySourceMode.TRAKT
     var initialHomeReady by rememberSaveable { mutableStateOf(false) }
     var offlineLaunchRouteHandled by rememberSaveable { mutableStateOf(false) }
     var networkToastBaselineReady by rememberSaveable { mutableStateOf(false) }
@@ -510,6 +573,42 @@ private fun MainAppContent(
             .mapNotNull { it.manifest?.transportUrl }
             .distinct()
             .sorted()
+    }
+
+    LaunchedEffect(nativeRequestedTab) {
+        if (liquidGlassNativeTabBarSupported && liquidGlassNativeTabBarEnabled) {
+            selectedTab = nativeRequestedTab.toAppScreenTab()
+        }
+    }
+
+    LaunchedEffect(selectedTab) {
+        NativeTabBridge.publishSelectedTab(selectedTab.toNativeNavigationTab())
+    }
+
+    DisposableEffect(
+        navController,
+        liquidGlassNativeTabBarSupported,
+        liquidGlassNativeTabBarEnabled,
+        initialHomeReady,
+    ) {
+        fun publishNativeTabVisibilityForCurrentRoute() {
+            val visible = liquidGlassNativeTabBarSupported &&
+                liquidGlassNativeTabBarEnabled &&
+                initialHomeReady &&
+                navController.currentDestination?.hasRoute<TabsRoute>() == true
+            NativeTabBridge.publishTabBarVisible(visible)
+        }
+
+        val destinationChangedListener = NavController.OnDestinationChangedListener { _, _, _ ->
+            publishNativeTabVisibilityForCurrentRoute()
+        }
+
+        publishNativeTabVisibilityForCurrentRoute()
+        navController.addOnDestinationChangedListener(destinationChangedListener)
+        onDispose {
+            navController.removeOnDestinationChangedListener(destinationChangedListener)
+            NativeTabBridge.publishTabBarVisible(false)
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -542,11 +641,11 @@ private fun MainAppContent(
 
         when (condition) {
             NetworkCondition.NoInternet -> {
-                NuvioToastController.show("No internet connection")
+                NuvioToastController.show(getString(Res.string.network_no_internet_connection))
             }
 
             NetworkCondition.ServersUnreachable -> {
-                NuvioToastController.show("Cannot reach servers")
+                NuvioToastController.show(getString(Res.string.network_cannot_reach_servers))
             }
 
             NetworkCondition.Online -> {
@@ -554,7 +653,7 @@ private fun MainAppContent(
                     previousConditionName == NetworkCondition.NoInternet.name ||
                     previousConditionName == NetworkCondition.ServersUnreachable.name
                 ) {
-                    NuvioToastController.show("Back online")
+                    NuvioToastController.show(getString(Res.string.network_back_online))
                 }
             }
 
@@ -587,7 +686,9 @@ private fun MainAppContent(
             NetworkCondition.ServersUnreachable,
             -> {
                 offlineLaunchRouteHandled = true
-                val hasPlayableDownload = downloadsUiState.completedItems.any { it.isPlayable }
+                val hasPlayableDownload = downloadsUiState.completedItems.any {
+                    DownloadsRepository.playableLocalFileUri(it) != null
+                }
                 if (hasPlayableDownload) {
                     selectedTab = AppScreenTab.Settings
                     navController.navigate(DownloadsSettingsRoute) {
@@ -680,7 +781,7 @@ private fun MainAppContent(
                     episodeNumber = episodeNumber,
                     videoId = videoId,
                 )
-                val localSourceUrl = downloadedItem?.localFileUri
+                val localSourceUrl = downloadedItem?.let(DownloadsRepository::playableLocalFileUri)
                 if (!localSourceUrl.isNullOrBlank()) {
                     val launchId = PlayerLaunchStore.put(
                         PlayerLaunch(
@@ -698,7 +799,7 @@ private fun MainAppContent(
                             streamTitle = downloadedItem.streamTitle.ifBlank { title },
                             streamSubtitle = downloadedItem.streamSubtitle,
                             pauseDescription = pauseDescription,
-                            providerName = downloadedItem.providerName.ifBlank { "Downloaded" },
+                            providerName = downloadedItem.providerName.ifBlank { downloadedProviderLabel },
                             providerAddonId = downloadedItem.providerAddonId,
                             contentType = type,
                             videoId = videoId,
@@ -798,15 +899,17 @@ private fun MainAppContent(
             )
         }
 
+        val librarySectionSubtitle = if (libraryUiState.sourceMode == LibrarySourceMode.TRAKT) {
+            stringResource(Res.string.compose_catalog_subtitle_trakt_library)
+        } else {
+            stringResource(Res.string.compose_catalog_subtitle_library)
+        }
+
         val onLibrarySectionViewAllClick: (LibrarySection) -> Unit = { section ->
             navController.navigate(
                 CatalogRoute(
                     title = section.displayTitle,
-                    subtitle = if (libraryUiState.sourceMode == LibrarySourceMode.TRAKT) {
-                        "Trakt Library"
-                    } else {
-                        "Library"
-                    },
+                    subtitle = librarySectionSubtitle,
                     manifestUrl = INTERNAL_LIBRARY_MANIFEST_URL,
                     type = section.items.firstOrNull()?.type ?: "movie",
                     catalogId = section.type,
@@ -879,6 +982,9 @@ private fun MainAppContent(
 
                     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
                         val isTabletLayout = maxWidth >= 768.dp
+                        val useNativeBottomTabs =
+                            liquidGlassNativeTabBarSupported && liquidGlassNativeTabBarEnabled && initialHomeReady
+                        val tabsRouteActive = currentBackStackEntry?.destination?.hasRoute<TabsRoute>() == true
                         val onProfileSelected: (NuvioProfile) -> Unit = { profile ->
                             profileSwitchLoading = true
                             selectedTab = AppScreenTab.Home
@@ -893,25 +999,25 @@ private fun MainAppContent(
                             containerColor = Color.Transparent,
                             contentWindowInsets = WindowInsets(0),
                             bottomBar = {
-                                if (!isTabletLayout) {
+                                if (!isTabletLayout && !useNativeBottomTabs) {
                                     NuvioNavigationBar {
                                         NavItem(
                                             selected = selectedTab == AppScreenTab.Home,
                                             onClick = { selectedTab = AppScreenTab.Home },
                                             icon = Icons.Filled.Home,
-                                            contentDescription = "Home",
+                                            contentDescription = stringResource(Res.string.compose_nav_home),
                                         )
                                         NavItem(
                                             selected = selectedTab == AppScreenTab.Search,
                                             onClick = { selectedTab = AppScreenTab.Search },
                                             icon = Res.drawable.sidebar_search,
-                                            contentDescription = "Search",
+                                            contentDescription = stringResource(Res.string.compose_nav_search),
                                         )
                                         NavItem(
                                             selected = selectedTab == AppScreenTab.Library,
                                             onClick = { selectedTab = AppScreenTab.Library },
                                             icon = Res.drawable.sidebar_library,
-                                            contentDescription = "Library",
+                                            contentDescription = stringResource(Res.string.compose_nav_library),
                                         )
                                         NavItem(
                                             selected = selectedTab == AppScreenTab.Settings,
@@ -929,58 +1035,66 @@ private fun MainAppContent(
                             },
                         ) { innerPadding ->
                             Box(modifier = Modifier.fillMaxSize()) {
-                                AppTabHost(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .padding(innerPadding),
-                                    selectedTab = selectedTab,
-                                    onCatalogClick = onCatalogClick,
-                                    onPosterClick = { meta ->
-                                        navController.navigate(DetailRoute(type = meta.type, id = meta.id))
-                                    },
-                                    onPosterLongClick = { meta ->
-                                        hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
-                                        selectedPosterForActions = meta
-                                    },
-                                    onLibraryPosterClick = { item ->
-                                        navController.navigate(DetailRoute(type = item.type, id = item.id))
-                                    },
-                                    onLibrarySectionViewAllClick = onLibrarySectionViewAllClick,
-                                    onContinueWatchingClick = onContinueWatchingClick,
-                                    onContinueWatchingLongPress = onContinueWatchingLongPress,
-                                    onSwitchProfile = onSwitchProfile,
-                                    onHomescreenSettingsClick = { navController.navigate(HomescreenSettingsRoute) },
-                                    onMetaScreenSettingsClick = { navController.navigate(MetaScreenSettingsRoute) },
-                                    onContinueWatchingSettingsClick = { navController.navigate(ContinueWatchingSettingsRoute) },
-                                    onDownloadsSettingsClick = { navController.navigate(DownloadsSettingsRoute) },
-                                    onAddonsSettingsClick = { navController.navigate(AddonsSettingsRoute) },
-                                    onPluginsSettingsClick = {
-                                        if (AppFeaturePolicy.pluginsEnabled) {
-                                            navController.navigate(PluginsSettingsRoute)
-                                        }
-                                    },
-                                    onAccountSettingsClick = { navController.navigate(AccountSettingsRoute) },
-                                    onSupportersContributorsSettingsClick = {
-                                        navController.navigate(SupportersContributorsSettingsRoute)
-                                    },
-                                    onCheckForUpdatesClick = if (AppFeaturePolicy.inAppUpdaterEnabled) {
-                                        {
-                                            appUpdaterController.checkForUpdates(
-                                                force = true,
-                                                showNoUpdateFeedback = true,
-                                            )
-                                        }
-                                    } else {
-                                        null
-                                    },
-                                    onCollectionsSettingsClick = { navController.navigate(CollectionsRoute) },
-                                    onFolderClick = { collectionId, folderId ->
-                                        navController.navigate(FolderDetailRoute(collectionId = collectionId, folderId = folderId))
-                                    },
-                                    onInitialHomeContentRendered = { initialHomeReady = true },
-                                )
+                                CompositionLocalProvider(
+                                    LocalNuvioBottomNavigationOverlayPadding provides if (useNativeBottomTabs) 49.dp else 0.dp,
+                                ) {
+                                    AppTabHost(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .padding(innerPadding),
+                                        selectedTab = selectedTab,
+                                        animateHomeCollectionGifs = tabsRouteActive,
+                                        onCatalogClick = onCatalogClick,
+                                        onPosterClick = { meta ->
+                                            navController.navigate(DetailRoute(type = meta.type, id = meta.id))
+                                        },
+                                        onPosterLongClick = { meta ->
+                                            hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            selectedPosterForActions = meta
+                                        },
+                                        onLibraryPosterClick = { item ->
+                                            navController.navigate(DetailRoute(type = item.type, id = item.id))
+                                        },
+                                        onLibrarySectionViewAllClick = onLibrarySectionViewAllClick,
+                                        onContinueWatchingClick = onContinueWatchingClick,
+                                        onContinueWatchingLongPress = onContinueWatchingLongPress,
+                                        onSwitchProfile = onSwitchProfile,
+                                        onHomescreenSettingsClick = { navController.navigate(HomescreenSettingsRoute) },
+                                        onMetaScreenSettingsClick = { navController.navigate(MetaScreenSettingsRoute) },
+                                        onContinueWatchingSettingsClick = { navController.navigate(ContinueWatchingSettingsRoute) },
+                                        onDownloadsSettingsClick = { navController.navigate(DownloadsSettingsRoute) },
+                                        onAddonsSettingsClick = { navController.navigate(AddonsSettingsRoute) },
+                                        onPluginsSettingsClick = {
+                                            if (AppFeaturePolicy.pluginsEnabled) {
+                                                navController.navigate(PluginsSettingsRoute)
+                                            }
+                                        },
+                                        onAccountSettingsClick = { navController.navigate(AccountSettingsRoute) },
+                                        onSupportersContributorsSettingsClick = {
+                                            navController.navigate(SupportersContributorsSettingsRoute)
+                                        },
+                                        onLicensesAttributionsSettingsClick = {
+                                            navController.navigate(LicensesAttributionsSettingsRoute)
+                                        },
+                                        onCheckForUpdatesClick = if (AppFeaturePolicy.inAppUpdaterEnabled) {
+                                            {
+                                                appUpdaterController.checkForUpdates(
+                                                    force = true,
+                                                    showNoUpdateFeedback = true,
+                                                )
+                                            }
+                                        } else {
+                                            null
+                                        },
+                                        onCollectionsSettingsClick = { navController.navigate(CollectionsRoute) },
+                                        onFolderClick = { collectionId, folderId ->
+                                            navController.navigate(FolderDetailRoute(collectionId = collectionId, folderId = folderId))
+                                        },
+                                        onInitialHomeContentRendered = { initialHomeReady = true },
+                                    )
+                                }
 
-                                if (isTabletLayout) {
+                                if (isTabletLayout && !useNativeBottomTabs) {
                                     TabletFloatingTopBar(
                                         selectedTab = selectedTab,
                                         onTabSelected = { selectedTab = it },
@@ -994,6 +1108,9 @@ private fun MainAppContent(
                 }
                 composable<DetailRoute> { backStackEntry ->
                     val route = backStackEntry.toRoute<DetailRoute>()
+                    val directorRole = stringResource(Res.string.person_role_director)
+                    val writerRole = stringResource(Res.string.person_role_writer)
+                    val creatorRole = stringResource(Res.string.person_role_creator)
                     MetaDetailsScreen(
                         type = route.type,
                         id = route.id,
@@ -1034,8 +1151,11 @@ private fun MainAppContent(
                                         castAvatarTransitionKey = avatarTransitionKey,
                                         preferCrew = person.role?.let {
                                             it.equals("Director", ignoreCase = true) ||
+                                                it.equals(directorRole, ignoreCase = true) ||
                                                 it.equals("Writer", ignoreCase = true) ||
+                                                it.equals(writerRole, ignoreCase = true) ||
                                                 it.equals("Creator", ignoreCase = true)
+                                                || it.equals(creatorRole, ignoreCase = true)
                                         } ?: false,
                                     ),
                                 )
@@ -1218,7 +1338,13 @@ private fun MainAppContent(
                         reuseHandled = true
                         if (launch.manualSelection) return@LaunchedEffect
                         if (!playerSettings.streamReuseLastLinkEnabled) return@LaunchedEffect
-                        val cacheKey = StreamLinkCacheRepository.contentKey(launch.type, effectiveVideoId)
+                        val cacheKey = StreamLinkCacheRepository.contentKey(
+                            type = launch.type,
+                            videoId = effectiveVideoId,
+                            parentMetaId = launch.parentMetaId,
+                            season = launch.seasonNumber,
+                            episode = launch.episodeNumber,
+                        )
                         val maxAgeMs = playerSettings.streamReuseLastLinkCacheHours * 60L * 60L * 1000L
                         val cached = StreamLinkCacheRepository.getValid(cacheKey, maxAgeMs)
                         if (cached != null) {
@@ -1258,17 +1384,37 @@ private fun MainAppContent(
                     }
 
                     val streamsUiState by StreamsRepository.uiState.collectAsStateWithLifecycle()
+                    val expectedStreamsRequestToken = StreamsRepository.requestToken(
+                        type = launch.type,
+                        videoId = effectiveVideoId,
+                        season = launch.seasonNumber,
+                        episode = launch.episodeNumber,
+                        manualSelection = launch.manualSelection,
+                    )
                     var autoPlayHandled by rememberSaveable(launch.videoId, effectiveVideoId) { mutableStateOf(false) }
-                    LaunchedEffect(streamsUiState.autoPlayStream, reuseHandled, launch.manualSelection) {
+                    LaunchedEffect(
+                        streamsUiState.autoPlayStream,
+                        streamsUiState.requestToken,
+                        expectedStreamsRequestToken,
+                        reuseHandled,
+                        launch.manualSelection,
+                    ) {
                         if (!reuseHandled) return@LaunchedEffect
                         if (launch.manualSelection) return@LaunchedEffect
                         if (reuseNavigated) return@LaunchedEffect
                         if (autoPlayHandled) return@LaunchedEffect
+                        if (streamsUiState.requestToken != expectedStreamsRequestToken) return@LaunchedEffect
                         val stream = streamsUiState.autoPlayStream ?: return@LaunchedEffect
                         val sourceUrl = stream.directPlaybackUrl ?: return@LaunchedEffect
                         autoPlayHandled = true
                         if (playerSettings.streamReuseLastLinkEnabled) {
-                            val cacheKey = StreamLinkCacheRepository.contentKey(launch.type, effectiveVideoId)
+                            val cacheKey = StreamLinkCacheRepository.contentKey(
+                                type = launch.type,
+                                videoId = effectiveVideoId,
+                                parentMetaId = launch.parentMetaId,
+                                season = launch.seasonNumber,
+                                episode = launch.episodeNumber,
+                            )
                             StreamLinkCacheRepository.save(
                                 contentKey = cacheKey,
                                 url = sourceUrl,
@@ -1310,6 +1456,7 @@ private fun MainAppContent(
                             )
                         )
                         StreamsRepository.consumeAutoPlay()
+                        StreamsRepository.cancelLoading()
                         navController.navigate(PlayerRoute(launchId = launchId)) {
                             popUpTo<StreamRoute> { inclusive = true }
                         }
@@ -1347,7 +1494,13 @@ private fun MainAppContent(
                             if (sourceUrl != null) {
                                 // Persist for Reuse Last Link
                                 if (playerSettings.streamReuseLastLinkEnabled) {
-                                    val cacheKey = StreamLinkCacheRepository.contentKey(launch.type, effectiveVideoId)
+                                    val cacheKey = StreamLinkCacheRepository.contentKey(
+                                        type = launch.type,
+                                        videoId = effectiveVideoId,
+                                        parentMetaId = launch.parentMetaId,
+                                        season = launch.seasonNumber,
+                                        episode = launch.episodeNumber,
+                                    )
                                     StreamLinkCacheRepository.save(
                                         contentKey = cacheKey,
                                         url = sourceUrl,
@@ -1388,6 +1541,7 @@ private fun MainAppContent(
                                         initialProgressFraction = resolvedResumeProgressFraction,
                                     )
                                 )
+                                StreamsRepository.cancelLoading()
                                 navController.navigate(
                                     PlayerRoute(launchId = launchId)
                                 )
@@ -1514,7 +1668,7 @@ private fun MainAppContent(
                     DownloadsScreen(
                         onBack = onBack,
                         onOpenDownload = { item ->
-                            val sourceUrl = item.localFileUri ?: return@DownloadsScreen
+                            val sourceUrl = DownloadsRepository.playableLocalFileUri(item) ?: return@DownloadsScreen
                             val resumeEntry = item.videoId
                                 .takeIf { it.isNotBlank() }
                                 ?.let(WatchProgressRepository::progressForVideo)
@@ -1587,6 +1741,15 @@ private fun MainAppContent(
                         onBack = onBack,
                     )
                 }
+                composable<LicensesAttributionsSettingsRoute> { backStackEntry ->
+                    val onBack = rememberGuardedPopBackStack(
+                        navController = navController,
+                        backStackEntry = backStackEntry,
+                    )
+                    LicensesAttributionsSettingsScreen(
+                        onBack = onBack,
+                    )
+                }
                 composable<CollectionsRoute> { backStackEntry ->
                     val onBack = rememberGuardedPopBackStack(
                         navController = navController,
@@ -1643,12 +1806,12 @@ private fun MainAppContent(
                 onToggleLibrary = {
                     selectedPosterForActions?.let { preview ->
                         val libraryItem = preview.toLibraryItem(savedAtEpochMs = 0L)
-                        if (!isTraktConnected) {
+                        if (!isTraktLibrarySource) {
                             LibraryRepository.toggleSaved(libraryItem)
                         } else {
                             pickerItem = libraryItem
                             pickerTitle = preview.name
-                            pickerTabs = LibraryRepository.traktListTabs()
+                            pickerTabs = LibraryRepository.libraryListTabs()
                             pickerMembership = pickerTabs.associate { it.key to false }
                             pickerPending = true
                             pickerError = null
@@ -1656,13 +1819,13 @@ private fun MainAppContent(
                             coroutineScope.launch {
                                 runCatching {
                                     val snapshot = LibraryRepository.getMembershipSnapshot(libraryItem)
-                                    val tabs = LibraryRepository.traktListTabs()
+                                    val tabs = LibraryRepository.libraryListTabs()
                                     pickerTabs = tabs
                                     pickerMembership = tabs.associate { tab ->
                                         tab.key to (snapshot[tab.key] == true)
                                     }
                                 }.onFailure { error ->
-                                    pickerError = error.message ?: "Failed to load Trakt lists"
+                                    pickerError = error.message ?: getString(Res.string.trakt_lists_load_failed)
                                 }
                                 pickerPending = false
                             }
@@ -1748,7 +1911,7 @@ private fun MainAppContent(
                             pickerItem = null
                             pickerError = null
                         }.onFailure { error ->
-                            pickerError = error.message ?: "Failed to update Trakt lists"
+                            pickerError = error.message ?: getString(Res.string.trakt_lists_update_failed)
                         }
                         pickerPending = false
                     }
@@ -1756,11 +1919,11 @@ private fun MainAppContent(
             )
 
             NuvioStatusModal(
-                title = "Exit app",
-                message = "Do you want to exit the app?",
+                title = stringResource(Res.string.app_exit_title),
+                message = stringResource(Res.string.app_exit_message),
                 isVisible = showExitConfirmation,
-                confirmText = "Yes",
-                dismissText = "No",
+                confirmText = stringResource(Res.string.action_yes),
+                dismissText = stringResource(Res.string.action_no),
                 onConfirm = {
                     showExitConfirmation = false
                     platformExitApp()
@@ -1791,9 +1954,9 @@ private fun MainAppContent(
                 visible = resumePromptItem != null,
                 imageUrl = resumePromptItem?.poster ?: resumePromptItem?.imageUrl,
                 title = resumePromptItem?.title.orEmpty(),
-                subtitle = resumePromptItem?.subtitle.orEmpty(),
+                subtitle = resumePromptItem?.let { localizedContinueWatchingSubtitle(it) }.orEmpty(),
                 progressFraction = resumePromptItem?.progressFraction ?: 0f,
-                actionLabel = "Resume",
+                actionLabel = stringResource(Res.string.resume_prompt_action),
                 onAction = {
                     val item = resumePromptItem ?: return@NuvioFloatingPrompt
                     resumePromptItem = null
@@ -1844,6 +2007,7 @@ private fun rememberGuardedPopBackStack(
 private fun AppTabHost(
     selectedTab: AppScreenTab,
     modifier: Modifier = Modifier,
+    animateHomeCollectionGifs: Boolean = true,
     onCatalogClick: ((HomeCatalogSection) -> Unit)? = null,
     onPosterClick: ((MetaPreview) -> Unit)? = null,
     onPosterLongClick: ((MetaPreview) -> Unit)? = null,
@@ -1860,6 +2024,7 @@ private fun AppTabHost(
     onPluginsSettingsClick: () -> Unit = {},
     onAccountSettingsClick: () -> Unit = {},
     onSupportersContributorsSettingsClick: () -> Unit = {},
+    onLicensesAttributionsSettingsClick: () -> Unit = {},
     onCheckForUpdatesClick: (() -> Unit)? = null,
     onCollectionsSettingsClick: () -> Unit = {},
     onFolderClick: ((collectionId: String, folderId: String) -> Unit)? = null,
@@ -1873,6 +2038,7 @@ private fun AppTabHost(
                 AppScreenTab.Home -> {
                     HomeScreen(
                         modifier = Modifier.fillMaxSize(),
+                        animateCollectionGifs = animateHomeCollectionGifs,
                         onCatalogClick = onCatalogClick,
                         onPosterClick = onPosterClick,
                         onPosterLongClick = onPosterLongClick,
@@ -1911,6 +2077,7 @@ private fun AppTabHost(
                         onPluginsClick = onPluginsSettingsClick,
                         onAccountClick = onAccountSettingsClick,
                         onSupportersContributorsClick = onSupportersContributorsSettingsClick,
+                        onLicensesAttributionsClick = onLicensesAttributionsSettingsClick,
                         onCheckForUpdatesClick = onCheckForUpdatesClick,
                         onCollectionsClick = onCollectionsSettingsClick,
                     )
@@ -1948,13 +2115,13 @@ private fun TabletFloatingTopBar(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 TabletTopPillItem(
-                    label = "Home",
+                    label = stringResource(Res.string.compose_nav_home),
                     selected = selectedTab == AppScreenTab.Home,
                     onClick = { onTabSelected(AppScreenTab.Home) },
                     icon = {
                         Icon(
                             imageVector = Icons.Filled.Home,
-                            contentDescription = "Home",
+                            contentDescription = stringResource(Res.string.compose_nav_home),
                             modifier = Modifier.size(18.dp),
                             tint = if (selectedTab == AppScreenTab.Home) {
                                 MaterialTheme.colorScheme.onPrimaryContainer
@@ -1965,13 +2132,13 @@ private fun TabletFloatingTopBar(
                     },
                 )
                 TabletTopPillItem(
-                    label = "Search",
+                    label = stringResource(Res.string.compose_nav_search),
                     selected = selectedTab == AppScreenTab.Search,
                     onClick = { onTabSelected(AppScreenTab.Search) },
                     icon = {
                         Icon(
                             painter = painterResource(Res.drawable.sidebar_search),
-                            contentDescription = "Search",
+                            contentDescription = stringResource(Res.string.compose_nav_search),
                             modifier = Modifier.size(18.dp),
                             tint = if (selectedTab == AppScreenTab.Search) {
                                 MaterialTheme.colorScheme.onPrimaryContainer
@@ -1982,13 +2149,13 @@ private fun TabletFloatingTopBar(
                     },
                 )
                 TabletTopPillItem(
-                    label = "Library",
+                    label = stringResource(Res.string.compose_nav_library),
                     selected = selectedTab == AppScreenTab.Library,
                     onClick = { onTabSelected(AppScreenTab.Library) },
                     icon = {
                         Icon(
                             painter = painterResource(Res.drawable.sidebar_library),
-                            contentDescription = "Library",
+                            contentDescription = stringResource(Res.string.compose_nav_library),
                             modifier = Modifier.size(18.dp),
                             tint = if (selectedTab == AppScreenTab.Library) {
                                 MaterialTheme.colorScheme.onPrimaryContainer
@@ -2018,7 +2185,7 @@ private fun TabletFloatingTopBar(
                             onAddProfileRequested = onAddProfileRequested,
                         )
                         Text(
-                            text = "Profile",
+                            text = stringResource(Res.string.compose_nav_profile),
                             modifier = Modifier.clickable { onTabSelected(AppScreenTab.Settings) },
                             style = MaterialTheme.typography.labelLarge,
                             color = if (selectedTab == AppScreenTab.Settings) {
@@ -2081,7 +2248,7 @@ private fun AppLaunchOverlay(
         ) {
             Image(
                 painter = painterResource(Res.drawable.app_logo_wordmark),
-                contentDescription = "Nuvio",
+                contentDescription = stringResource(Res.string.app_brand_name),
                 modifier = Modifier
                     .fillMaxWidth(0.48f)
                     .height(44.dp),

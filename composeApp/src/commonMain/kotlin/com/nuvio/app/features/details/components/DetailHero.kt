@@ -26,6 +26,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import coil3.compose.AsyncImage
 import com.nuvio.app.features.details.MetaDetails
 import com.nuvio.app.features.home.components.homeHeroLayout
+import nuvio.composeapp.generated.resources.*
+import org.jetbrains.compose.resources.stringResource
 
 @Composable
 fun DetailHero(
@@ -108,7 +110,7 @@ fun DetailHero(
                     if (meta.logo != null) {
                         AsyncImage(
                             model = meta.logo,
-                            contentDescription = "${meta.name} logo",
+                            contentDescription = stringResource(Res.string.detail_logo_content_description, meta.name),
                             modifier = Modifier
                                 .fillMaxWidth(if (isTablet) 0.56f else 0.6f)
                                 .widthIn(max = contentMaxWidth)

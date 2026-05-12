@@ -1,5 +1,9 @@
 package com.nuvio.app.features.watching.domain
 
+import com.nuvio.app.core.i18n.localizedPlayLabel
+import com.nuvio.app.core.i18n.localizedResumeLabel
+import com.nuvio.app.core.i18n.localizedUpNextLabel
+
 const val DefaultContinueWatchingLimit = 20
 
 fun resumeProgressForSeries(
@@ -42,12 +46,33 @@ fun nextReleasedEpisodeAfter(
         compareBy<WatchingReleasedEpisode>({ normalizeSeasonNumber(it.seasonNumber) }, { it.episodeNumber ?: 0 }),
     )
     val watchedVideoId = buildPlaybackVideoId(content, seasonNumber, episodeNumber)
+    var watchedIndex = sortedEpisodes.indexOfFirst { episode ->
+        buildPlaybackVideoId(content, episode.seasonNumber, episode.episodeNumber, episode.videoId) == watchedVideoId
+    }
+
+    // Fallback: if the seed wasn't found by season+episode (anime with absolute
+    // numbering on Trakt vs multi-season on addon), try global index matching.
+    if (watchedIndex < 0 && seasonNumber != null && episodeNumber != null) {
+        val mainEpisodes = sortedEpisodes.filter { episode -> normalizeSeasonNumber(episode.seasonNumber) > 0 }
+        val addonSeasons = mainEpisodes.mapTo(mutableSetOf()) { episode ->
+            normalizeSeasonNumber(episode.seasonNumber)
+        }
+        if (seasonNumber == 1 && addonSeasons.size > 1 && episodeNumber > 0) {
+            val globalIndex = episodeNumber - 1
+            if (globalIndex in mainEpisodes.indices) {
+                watchedIndex = sortedEpisodes.indexOf(mainEpisodes[globalIndex])
+            }
+        }
+    }
+
+    if (watchedIndex < 0) return null
+
+    val watchedEpisodeSeason = sortedEpisodes[watchedIndex].seasonNumber
     val candidates = sortedEpisodes
-        .dropWhile { episode -> buildPlaybackVideoId(content, episode.seasonNumber, episode.episodeNumber, episode.videoId) != watchedVideoId }
-        .drop(1)
+        .drop(watchedIndex + 1)
         .filter { episode ->
             shouldSurfaceNextEpisode(
-                watchedSeasonNumber = seasonNumber,
+                watchedSeasonNumber = watchedEpisodeSeason,
                 candidateSeasonNumber = episode.seasonNumber,
                 todayIsoDate = todayIsoDate,
                 releasedDate = episode.releasedDate,
@@ -130,25 +155,13 @@ fun buildPlaybackVideoId(
     }
 
 fun playLabel(seasonNumber: Int?, episodeNumber: Int?): String =
-    if (seasonNumber != null && episodeNumber != null) {
-        "Play S${seasonNumber}E${episodeNumber}"
-    } else {
-        "Play"
-    }
+    localizedPlayLabel(seasonNumber = seasonNumber, episodeNumber = episodeNumber)
 
 fun upNextLabel(seasonNumber: Int?, episodeNumber: Int?): String =
-    if (seasonNumber != null && episodeNumber != null) {
-        "Up Next S${seasonNumber}E${episodeNumber}"
-    } else {
-        "Up Next"
-    }
+    localizedUpNextLabel(seasonNumber = seasonNumber, episodeNumber = episodeNumber)
 
 fun resumeLabel(seasonNumber: Int?, episodeNumber: Int?): String =
-    if (seasonNumber != null && episodeNumber != null) {
-        "Resume S${seasonNumber}E${episodeNumber}"
-    } else {
-        "Resume"
-    }
+    localizedResumeLabel(seasonNumber = seasonNumber, episodeNumber = episodeNumber)
 
 private fun WatchingProgressRecord.toResumeAction(): WatchingSeriesPrimaryAction =
     WatchingSeriesPrimaryAction(

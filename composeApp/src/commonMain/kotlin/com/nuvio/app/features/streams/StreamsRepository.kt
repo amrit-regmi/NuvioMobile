@@ -23,6 +23,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import nuvio.composeapp.generated.resources.*
+import org.jetbrains.compose.resources.getString
 import kotlinx.coroutines.launch
 
 object StreamsRepository {
@@ -33,6 +35,15 @@ object StreamsRepository {
 
     private var activeJob: Job? = null
     private var activeRequestKey: String? = null
+
+    fun requestToken(
+        type: String,
+        videoId: String,
+        season: Int? = null,
+        episode: Int? = null,
+        manualSelection: Boolean = false,
+    ): String =
+        "$type::$videoId::$season::$episode::$manualSelection"
 
     fun load(type: String, videoId: String, season: Int? = null, episode: Int? = null, manualSelection: Boolean = false) {
         load(
@@ -63,7 +74,14 @@ object StreamsRepository {
         } else {
             PluginsUiState(pluginsEnabled = false)
         }
-        val requestKey = "$type::$videoId::$season::$episode::$manualSelection::pluginsGrouped=${pluginUiState.groupStreamsByRepository}"
+        val requestToken = requestToken(
+            type = type,
+            videoId = videoId,
+            season = season,
+            episode = episode,
+            manualSelection = manualSelection,
+        )
+        val requestKey = "$requestToken::pluginsGrouped=${pluginUiState.groupStreamsByRepository}"
         val currentState = _uiState.value
         if (
             !forceRefresh &&
@@ -76,7 +94,7 @@ object StreamsRepository {
 
         activeRequestKey = requestKey
         activeJob?.cancel()
-        _uiState.value = StreamsUiState()
+        _uiState.value = StreamsUiState(requestToken = requestToken)
 
         PlayerSettingsRepository.ensureLoaded()
         val playerSettings = PlayerSettingsRepository.uiState.value
@@ -88,6 +106,7 @@ object StreamsRepository {
 
         if (isDirectAutoPlayFlow) {
             _uiState.value = StreamsUiState(
+                requestToken = requestToken,
                 isDirectAutoPlayFlow = true,
                 showDirectAutoPlayOverlay = true,
             )
@@ -103,6 +122,7 @@ object StreamsRepository {
                 isLoading = false,
             )
             _uiState.value = StreamsUiState(
+                requestToken = requestToken,
                 groups = listOf(group),
                 activeAddonIds = setOf("embedded"),
                 isAnyLoading = false,
@@ -123,6 +143,7 @@ object StreamsRepository {
 
         if (installedAddons.isEmpty() && pluginProviderGroups.isEmpty()) {
             _uiState.value = StreamsUiState(
+                requestToken = requestToken,
                 isAnyLoading = false,
                 emptyStateReason = StreamsEmptyStateReason.NoAddonsInstalled,
             )
@@ -149,8 +170,9 @@ object StreamsRepository {
 
         log.d { "Found ${streamAddons.size} addons for stream type=$type id=$videoId" }
 
-            if (streamAddons.isEmpty() && pluginProviderGroups.isEmpty()) {
+        if (streamAddons.isEmpty() && pluginProviderGroups.isEmpty()) {
             _uiState.value = StreamsUiState(
+                requestToken = requestToken,
                 isAnyLoading = false,
                 emptyStateReason = StreamsEmptyStateReason.NoCompatibleAddons,
             )
@@ -174,6 +196,7 @@ object StreamsRepository {
             )
         }
         _uiState.value = StreamsUiState(
+            requestToken = requestToken,
             groups = initialGroups,
             activeAddonIds = initialGroups.map { it.addonId }.toSet(),
             isAnyLoading = true,
@@ -313,7 +336,7 @@ object StreamsRepository {
                                 StreamLoadCompletion.PluginScraper(
                                     addonId = providerGroup.addonId,
                                     streams = emptyList(),
-                                    error = error.message ?: "Failed to load ${scraper.name}",
+                                    error = error.message ?: getString(Res.string.streams_failed_to_load_scraper, scraper.name),
                                 )
                             },
                         )
@@ -422,8 +445,32 @@ object StreamsRepository {
         }
     }
 
+    fun cancelLoading() {
+        activeJob?.cancel()
+        activeJob = null
+        _uiState.update { current ->
+            if (!current.isAnyLoading && current.groups.none { it.isLoading }) {
+                current
+            } else {
+                val updatedGroups = current.groups.map { group ->
+                    if (group.isLoading) group.copy(isLoading = false) else group
+                }
+                current.copy(
+                    groups = updatedGroups,
+                    isAnyLoading = false,
+                    emptyStateReason = if (updatedGroups.isEmpty()) {
+                        current.emptyStateReason
+                    } else {
+                        updatedGroups.toEmptyStateReason(anyLoading = false)
+                    },
+                )
+            }
+        }
+    }
+
     fun clear() {
         activeJob?.cancel()
+        activeJob = null
         activeRequestKey = null
         _uiState.value = StreamsUiState()
     }

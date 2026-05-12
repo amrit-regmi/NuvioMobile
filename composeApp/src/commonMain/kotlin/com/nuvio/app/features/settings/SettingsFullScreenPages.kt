@@ -16,6 +16,14 @@ import com.nuvio.app.features.details.MetaScreenSettingsRepository
 import com.nuvio.app.features.plugins.PluginRepository
 import com.nuvio.app.features.home.HomeCatalogSettingsRepository
 import com.nuvio.app.features.watchprogress.ContinueWatchingPreferencesRepository
+import nuvio.composeapp.generated.resources.Res
+import nuvio.composeapp.generated.resources.compose_settings_page_account
+import nuvio.composeapp.generated.resources.compose_settings_page_addons
+import nuvio.composeapp.generated.resources.compose_settings_page_continue_watching
+import nuvio.composeapp.generated.resources.compose_settings_page_homescreen
+import nuvio.composeapp.generated.resources.compose_settings_page_meta_screen
+import nuvio.composeapp.generated.resources.compose_settings_page_plugins
+import org.jetbrains.compose.resources.stringResource
 
 @Composable
 fun HomescreenSettingsScreen(
@@ -37,7 +45,10 @@ fun HomescreenSettingsScreen(
             }
         }
     }
-    val homescreenSettingsUiState by HomeCatalogSettingsRepository.uiState.collectAsStateWithLifecycle()
+    val homescreenSettingsUiState by remember {
+        HomeCatalogSettingsRepository.snapshot()
+        HomeCatalogSettingsRepository.uiState
+    }.collectAsStateWithLifecycle()
     val collections by CollectionRepository.collections.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) {
@@ -59,13 +70,15 @@ fun HomescreenSettingsScreen(
     ) {
         stickyHeader {
             NuvioScreenHeader(
-                title = "Homescreen",
+                title = stringResource(Res.string.compose_settings_page_homescreen),
                 onBack = onBack,
             )
         }
         homescreenSettingsContent(
             isTablet = false,
             heroEnabled = homescreenSettingsUiState.heroEnabled,
+            hideUnreleasedContent = homescreenSettingsUiState.hideUnreleasedContent,
+            hideCatalogUnderline = homescreenSettingsUiState.hideCatalogUnderline,
             items = homescreenSettingsUiState.items,
         )
     }
@@ -85,7 +98,7 @@ fun MetaScreenSettingsScreen(
     ) {
         stickyHeader {
             NuvioScreenHeader(
-                title = "Meta Screen",
+                title = stringResource(Res.string.compose_settings_page_meta_screen),
                 onBack = onBack,
             )
         }
@@ -110,7 +123,7 @@ fun ContinueWatchingSettingsScreen(
     ) {
         stickyHeader {
             NuvioScreenHeader(
-                title = "Continue Watching",
+                title = stringResource(Res.string.compose_settings_page_continue_watching),
                 onBack = onBack,
             )
         }
@@ -119,7 +132,11 @@ fun ContinueWatchingSettingsScreen(
             isVisible = continueWatchingPreferencesUiState.isVisible,
             style = continueWatchingPreferencesUiState.style,
             upNextFromFurthestEpisode = continueWatchingPreferencesUiState.upNextFromFurthestEpisode,
+            useEpisodeThumbnails = continueWatchingPreferencesUiState.useEpisodeThumbnails,
+            showUnairedNextUp = continueWatchingPreferencesUiState.showUnairedNextUp,
+            blurNextUp = continueWatchingPreferencesUiState.blurNextUp,
             showResumePromptOnLaunch = continueWatchingPreferencesUiState.showResumePromptOnLaunch,
+            sortMode = continueWatchingPreferencesUiState.sortMode,
         )
     }
 }
@@ -137,7 +154,7 @@ fun AddonsSettingsScreen(
     ) {
         stickyHeader {
             NuvioScreenHeader(
-                title = "Addons",
+                title = stringResource(Res.string.compose_settings_page_addons),
                 onBack = onBack,
             )
         }
@@ -163,7 +180,7 @@ fun PluginsSettingsScreen(
     ) {
         stickyHeader {
             NuvioScreenHeader(
-                title = "Plugins",
+                title = stringResource(Res.string.compose_settings_page_plugins),
                 onBack = onBack,
             )
         }
@@ -180,7 +197,7 @@ fun AccountSettingsScreen(
     ) {
         stickyHeader {
             NuvioScreenHeader(
-                title = "Account",
+                title = stringResource(Res.string.compose_settings_page_account),
                 onBack = onBack,
             )
         }

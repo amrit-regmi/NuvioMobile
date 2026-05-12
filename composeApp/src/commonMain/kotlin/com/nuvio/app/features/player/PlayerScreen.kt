@@ -1,6 +1,7 @@
 package com.nuvio.app.features.player
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
@@ -39,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.features.addons.AddonRepository
 import com.nuvio.app.features.details.MetaDetailsRepository
+import com.nuvio.app.features.details.MetaScreenSettingsRepository
 import com.nuvio.app.features.details.MetaVideo
 import com.nuvio.app.features.downloads.DownloadItem
 import com.nuvio.app.features.downloads.DownloadsRepository
@@ -54,6 +56,7 @@ import com.nuvio.app.features.streams.StreamItem
 import com.nuvio.app.features.streams.StreamLinkCacheRepository
 import com.nuvio.app.features.streams.StreamsUiState
 import com.nuvio.app.features.trakt.TraktScrobbleRepository
+import com.nuvio.app.features.watched.WatchedRepository
 import com.nuvio.app.features.watchprogress.WatchProgressClock
 import com.nuvio.app.features.watchprogress.WatchProgressPlaybackSession
 import com.nuvio.app.features.watchprogress.WatchProgressRepository
@@ -62,6 +65,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import nuvio.composeapp.generated.resources.*
+import org.jetbrains.compose.resources.stringResource
 import kotlin.math.abs
 import kotlin.math.roundToLong
 import kotlin.math.roundToInt
@@ -136,10 +141,21 @@ fun PlayerScreen(
     initialProgressFraction: Float? = null,
 ) {
     LockPlayerToLandscape()
-    EnterImmersivePlayerMode()
     val playerSettingsUiState by remember {
         PlayerSettingsRepository.ensureLoaded()
         PlayerSettingsRepository.uiState
+    }.collectAsStateWithLifecycle()
+    val metaScreenSettingsUiState by remember {
+        MetaScreenSettingsRepository.ensureLoaded()
+        MetaScreenSettingsRepository.uiState
+    }.collectAsStateWithLifecycle()
+    val watchedUiState by remember {
+        WatchedRepository.ensureLoaded()
+        WatchedRepository.uiState
+    }.collectAsStateWithLifecycle()
+    val watchProgressUiState by remember {
+        WatchProgressRepository.ensureLoaded()
+        WatchProgressRepository.uiState
     }.collectAsStateWithLifecycle()
 
     BoxWithConstraints(
@@ -153,6 +169,12 @@ fun PlayerScreen(
         val overlayBottomPadding = sliderOverlayBottomPadding(metrics)
         val scope = rememberCoroutineScope()
         val hapticFeedback = LocalHapticFeedback.current
+        val resizeModeFitLabel = stringResource(Res.string.compose_player_resize_fit)
+        val resizeModeFillLabel = stringResource(Res.string.compose_player_resize_fill)
+        val resizeModeZoomLabel = stringResource(Res.string.compose_player_resize_zoom)
+        val downloadedLabel = stringResource(Res.string.compose_player_downloaded)
+        val airsPrefix = stringResource(Res.string.compose_player_airs_prefix)
+        val tbaLabel = stringResource(Res.string.compose_player_tba)
         val gestureController = rememberPlayerGestureController()
         var controlsVisible by rememberSaveable { mutableStateOf(true) }
         var playerControlsLocked by rememberSaveable { mutableStateOf(false) }
@@ -186,6 +208,9 @@ fun PlayerScreen(
         var playerController by remember { mutableStateOf<PlayerEngineController?>(null) }
         var playerControllerSourceUrl by remember { mutableStateOf<String?>(null) }
         var errorMessage by remember { mutableStateOf<String?>(null) }
+        val keepScreenAwake = errorMessage == null &&
+            (playbackSnapshot.isPlaying || (shouldPlay && playbackSnapshot.isLoading))
+        EnterImmersivePlayerMode(keepScreenAwake = keepScreenAwake)
         var scrubbingPositionMs by remember { mutableStateOf<Long?>(null) }
         var pausedOverlayVisible by remember { mutableStateOf(false) }
         var gestureFeedback by remember { mutableStateOf<GestureFeedbackState?>(null) }
@@ -214,7 +239,6 @@ fun PlayerScreen(
             activeEpisodeNumber,
         ) { mutableStateOf(false) }
         var hasSentCompletionScrobbleForCurrentItem by remember(
-            activeSourceUrl,
             activeVideoId,
             activeSeasonNumber,
             activeEpisodeNumber,
@@ -233,6 +257,10 @@ fun PlayerScreen(
         // Sources & Episodes Panel state
         var showSourcesPanel by remember { mutableStateOf(false) }
         var showEpisodesPanel by remember { mutableStateOf(false) }
+        var showSubmitIntroModal by remember { mutableStateOf(false) }
+        var submitIntroSegmentType by rememberSaveable { mutableStateOf("intro") }
+        var submitIntroStartTimeStr by rememberSaveable { mutableStateOf("00:00") }
+        var submitIntroEndTimeStr by rememberSaveable { mutableStateOf("00:00") }
         var episodeStreamsPanelState by remember { mutableStateOf(EpisodeStreamsPanelState()) }
         val sourceStreamsState by PlayerStreamsRepository.sourceState.collectAsStateWithLifecycle()
         val episodeStreamsRepoState by PlayerStreamsRepository.episodeStreamsState.collectAsStateWithLifecycle()
@@ -329,9 +357,10 @@ fun PlayerScreen(
                 .coerceIn(0f, 100f)
         }
 
-        fun currentTraktScrobbleItem() = TraktScrobbleRepository.buildItem(
+        suspend fun currentTraktScrobbleItem() = TraktScrobbleRepository.buildItem(
             contentType = contentType ?: parentMetaType,
             parentMetaId = parentMetaId,
+            videoId = activeVideoId,
             title = title,
             seasonNumber = activeSeasonNumber,
             episodeNumber = activeEpisodeNumber,
@@ -339,11 +368,15 @@ fun PlayerScreen(
         )
 
         fun emitTraktScrobbleStart() {
-            val item = currentTraktScrobbleItem() ?: return
             if (hasRequestedScrobbleStartForCurrentItem) return
             hasRequestedScrobbleStartForCurrentItem = true
 
             scope.launch {
+                val item = currentTraktScrobbleItem()
+                if (item == null) {
+                    hasRequestedScrobbleStartForCurrentItem = false
+                    return@launch
+                }
                 TraktScrobbleRepository.scrobbleStart(
                     item = item,
                     progressPercent = currentPlaybackProgressPercent(),
@@ -352,12 +385,12 @@ fun PlayerScreen(
         }
 
         fun emitTraktScrobbleStop(progressPercent: Float? = null) {
-            val item = currentTraktScrobbleItem() ?: return
             val provided = progressPercent
             if (!hasRequestedScrobbleStartForCurrentItem && (provided ?: 0f) < 80f) return
 
             val percent = provided ?: currentPlaybackProgressPercent()
             scope.launch {
+                val item = currentTraktScrobbleItem() ?: return@launch
                 TraktScrobbleRepository.scrobbleStop(
                     item = item,
                     progressPercent = percent,
@@ -370,7 +403,6 @@ fun PlayerScreen(
             val progressPercent = currentPlaybackProgressPercent()
             if (progressPercent >= 1f && progressPercent < 80f) {
                 emitTraktScrobbleStop(progressPercent)
-                hasSentCompletionScrobbleForCurrentItem = false
                 return
             }
 
@@ -534,7 +566,12 @@ fun PlayerScreen(
             if (seconds <= 0L) return
             showGestureFeedback(
                 GestureFeedbackState(
-                    message = if (direction == PlayerSeekDirection.Forward) "+${seconds}s" else "-${seconds}s",
+                    messageRes = if (direction == PlayerSeekDirection.Forward) {
+                        Res.string.compose_player_seek_feedback_forward
+                    } else {
+                        Res.string.compose_player_seek_feedback_backward
+                    },
+                    messageArgs = listOf(seconds),
                     icon = if (direction == PlayerSeekDirection.Forward) {
                         GestureFeedbackIcon.SeekForward
                     } else {
@@ -554,11 +591,12 @@ fun PlayerScreen(
                 } else {
                     GestureFeedbackIcon.SeekBackward
                 },
-                secondaryMessage = buildString {
-                    if (deltaMs >= 0L) append("+")
-                    append((abs(deltaMs) / 1000f).roundToInt())
-                    append("s")
+                secondaryMessageRes = if (deltaMs >= 0L) {
+                    Res.string.compose_player_seek_delta_forward
+                } else {
+                    Res.string.compose_player_seek_delta_backward
                 },
+                secondaryMessageArgs = listOf((abs(deltaMs) / 1000f).roundToInt()),
                 secondaryMessageColor = if (direction == PlayerSeekDirection.Forward) {
                     Color(0xFF6EE7A8)
                 } else {
@@ -571,7 +609,8 @@ fun PlayerScreen(
             val percentage = (level.coerceIn(0f, 1f) * 100f).roundToInt()
             showGestureFeedback(
                 GestureFeedbackState(
-                    message = "Brightness $percentage%",
+                    messageRes = Res.string.compose_player_brightness_level,
+                    messageArgs = listOf("$percentage%"),
                     icon = GestureFeedbackIcon.Brightness,
                 ),
             )
@@ -581,7 +620,12 @@ fun PlayerScreen(
             val percentage = (level.fraction.coerceIn(0f, 1f) * 100f).roundToInt()
             showGestureFeedback(
                 GestureFeedbackState(
-                    message = if (level.isMuted) "Muted" else "Volume $percentage%",
+                    messageRes = if (level.isMuted) {
+                        Res.string.compose_player_muted
+                    } else {
+                        Res.string.compose_player_volume_level
+                    },
+                    messageArgs = if (level.isMuted) emptyList() else listOf("$percentage%"),
                     icon = if (level.isMuted) GestureFeedbackIcon.VolumeMuted else GestureFeedbackIcon.Volume,
                     isDanger = level.isMuted,
                 ),
@@ -636,7 +680,6 @@ fun PlayerScreen(
                 }
             }
             playerController?.seekTo(targetPositionMs)
-            controlsVisible = true
             showSeekFeedback(direction, nextState.amountMs)
 
             accumulatedSeekResetJob?.cancel()
@@ -650,7 +693,13 @@ fun PlayerScreen(
             val nextMode = resizeMode.next()
             resizeMode = nextMode
             PlayerSettingsRepository.setResizeMode(nextMode)
-            showGestureMessage(nextMode.label)
+            showGestureMessage(
+                when (nextMode) {
+                    PlayerResizeMode.Fit -> resizeModeFitLabel
+                    PlayerResizeMode.Fill -> resizeModeFillLabel
+                    PlayerResizeMode.Zoom -> resizeModeZoomLabel
+                },
+            )
             controlsVisible = true
         }
 
@@ -742,8 +791,11 @@ fun PlayerScreen(
             flushWatchProgress()
             if (playerSettingsUiState.streamReuseLastLinkEnabled && activeVideoId != null) {
                 val cacheKey = StreamLinkCacheRepository.contentKey(
-                    contentType ?: parentMetaType,
-                    activeVideoId!!,
+                    type = contentType ?: parentMetaType,
+                    videoId = activeVideoId!!,
+                    parentMetaId = parentMetaId,
+                    season = activeSeasonNumber,
+                    episode = activeEpisodeNumber,
                 )
                 StreamLinkCacheRepository.save(
                     contentKey = cacheKey,
@@ -802,8 +854,11 @@ fun PlayerScreen(
             val epResumePositionMs = epEntry?.lastPositionMs?.takeIf { it > 0L } ?: 0L
             if (playerSettingsUiState.streamReuseLastLinkEnabled) {
                 val cacheKey = StreamLinkCacheRepository.contentKey(
-                    contentType ?: parentMetaType,
-                    epVideoId,
+                    type = contentType ?: parentMetaType,
+                    videoId = epVideoId,
+                    parentMetaId = parentMetaId,
+                    season = episode.season,
+                    episode = episode.episode,
                 )
                 StreamLinkCacheRepository.save(
                     contentKey = cacheKey,
@@ -838,7 +893,7 @@ fun PlayerScreen(
         }
 
         fun switchToDownloadedEpisode(downloadItem: DownloadItem, episode: MetaVideo) {
-            val localFileUri = downloadItem.localFileUri ?: return
+            val localFileUri = DownloadsRepository.playableLocalFileUri(downloadItem) ?: return
             showNextEpisodeCard = false
             showSourcesPanel = false
             showEpisodesPanel = false
@@ -872,7 +927,7 @@ fun PlayerScreen(
                 episode.title.ifBlank { title }
             }
             activeStreamSubtitle = downloadItem.streamSubtitle
-            activeProviderName = downloadItem.providerName.ifBlank { "Downloaded" }
+            activeProviderName = downloadItem.providerName.ifBlank { downloadedLabel }
             activeProviderAddonId = downloadItem.providerAddonId
             currentStreamBingeGroup = null
             activeSeasonNumber = episode.season
@@ -1036,6 +1091,12 @@ fun PlayerScreen(
             controlsVisible = false
         }
 
+        fun fetchAddonSubtitlesForActiveItem() {
+            val type = contentType ?: return
+            val videoId = activeVideoId ?: return
+            SubtitleRepository.fetchAddonSubtitles(type, videoId)
+        }
+
         LaunchedEffect(activeSourceUrl, activeSourceAudioUrl, activeSourceHeaders, activeSourceResponseHeaders) {
             errorMessage = null
             playerController = null
@@ -1088,6 +1149,13 @@ fun PlayerScreen(
                 selectedFilter = episodeStreamsRepoState.selectedFilter,
                 currentStreamUrl = activeSourceUrl,
             )
+        }
+
+        LaunchedEffect(showSubtitleModal, activeSubtitleTab, contentType, activeVideoId) {
+            if (!showSubtitleModal || activeSubtitleTab != SubtitleTab.Addons) return@LaunchedEffect
+            if (!isLoadingAddonSubtitles && addonSubtitles.isEmpty()) {
+                fetchAddonSubtitlesForActiveItem()
+            }
         }
 
         LaunchedEffect(playbackSnapshot.isLoading, playerController) {
@@ -1180,15 +1248,20 @@ fun PlayerScreen(
             pausedOverlayVisible = true
         }
 
-        LaunchedEffect(playbackSnapshot.positionMs, playbackSnapshot.isPlaying, playbackSnapshot.isEnded, playbackSnapshot.durationMs) {
+        LaunchedEffect(
+            playbackSnapshot.positionMs,
+            playbackSnapshot.isPlaying,
+            playbackSnapshot.isLoading,
+            playbackSnapshot.isEnded,
+            playbackSnapshot.durationMs,
+        ) {
             if (playbackSnapshot.isEnded) {
-                hasSentCompletionScrobbleForCurrentItem = false
                 flushWatchProgress()
                 previousIsPlaying = false
                 return@LaunchedEffect
             }
 
-            if (previousIsPlaying && !playbackSnapshot.isPlaying) {
+            if (previousIsPlaying && !playbackSnapshot.isPlaying && !playbackSnapshot.isLoading) {
                 flushWatchProgress()
             }
 
@@ -1196,7 +1269,9 @@ fun PlayerScreen(
                 emitTraktScrobbleStart()
             }
 
-            previousIsPlaying = playbackSnapshot.isPlaying
+            if (!playbackSnapshot.isLoading) {
+                previousIsPlaying = playbackSnapshot.isPlaying
+            }
 
             if (!playbackSnapshot.isPlaying) {
                 return@LaunchedEffect
@@ -1303,7 +1378,7 @@ fun PlayerScreen(
                     released = nextVideo.released,
                     hasAired = PlayerNextEpisodeRules.hasEpisodeAired(nextVideo.released),
                     unairedMessage = if (!PlayerNextEpisodeRules.hasEpisodeAired(nextVideo.released)) {
-                        "Airs ${nextVideo.released ?: "TBA"}"
+                        "$airsPrefix ${nextVideo.released ?: tbaLabel}"
                     } else null,
                 )
             } else null
@@ -1433,12 +1508,15 @@ fun PlayerScreen(
                             totalDy += delta.y
 
                             if (gestureMode == null) {
+                                val holdToSpeedActive = isHoldToSpeedGestureActiveState.value
                                 val horizontalDominant =
-                                    !isHoldToSpeedGestureActiveState.value &&
+                                    !holdToSpeedActive &&
                                         abs(totalDx) > viewConfiguration.touchSlop &&
                                         abs(totalDx) > abs(totalDy)
                                 val verticalDominant =
-                                    abs(totalDy) > viewConfiguration.touchSlop && abs(totalDy) > abs(totalDx)
+                                    !holdToSpeedActive &&
+                                        abs(totalDy) > viewConfiguration.touchSlop &&
+                                        abs(totalDy) > abs(totalDx)
 
                                 gestureMode = when {
                                     horizontalDominant -> {
@@ -1664,11 +1742,26 @@ fun PlayerScreen(
                     errorMessage = message
                     if (message != null) {
                         controlsVisible = !playerControlsLocked
+                        val currentVideoId = activeVideoId
+                        if (currentVideoId != null) {
+                            val cacheKey = StreamLinkCacheRepository.contentKey(
+                                type = contentType ?: parentMetaType,
+                                videoId = currentVideoId,
+                                parentMetaId = parentMetaId,
+                                season = activeSeasonNumber,
+                                episode = activeEpisodeNumber,
+                            )
+                            StreamLinkCacheRepository.remove(cacheKey)
+                        }
                     }
                 },
             )
 
-            if (pausedOverlayVisible && !controlsVisible && !playerControlsLocked) {
+            AnimatedVisibility(
+                visible = pausedOverlayVisible && !controlsVisible && !playerControlsLocked,
+                enter = fadeIn(animationSpec = tween(durationMillis = 220)),
+                exit = fadeOut(animationSpec = tween(durationMillis = 180)),
+            ) {
                 PauseMetadataOverlay(
                     title = title,
                     logo = logo,
@@ -1722,8 +1815,9 @@ fun PlayerScreen(
                         refreshTracks()
                         showAudioModal = true
                     },
-                    onSourcesClick = if (activeVideoId != null) {{ openSourcesPanel() }} else null,
-                    onEpisodesClick = if (isSeries) {{ openEpisodesPanel() }} else null,
+                    onSourcesClick = if (activeVideoId != null) { { openSourcesPanel() } } else null,
+                    onEpisodesClick = if (isSeries) { { openEpisodesPanel() } } else null,
+                    onSubmitIntroClick = if (isSeries && playerSettingsUiState.introSubmitEnabled && playerSettingsUiState.introDbApiKey.isNotBlank()) { { showSubmitIntroModal = true } } else null,
                     onScrubChange = { positionMs -> scrubbingPositionMs = positionMs },
                     onScrubFinished = { positionMs ->
                         scrubbingPositionMs = null
@@ -1877,11 +1971,7 @@ fun PlayerScreen(
                     useCustomSubtitles = true
                     playerController?.setSubtitleUri(addon.url)
                 },
-                onFetchAddonSubtitles = {
-                    if (contentType != null && activeVideoId != null) {
-                        SubtitleRepository.fetchAddonSubtitles(contentType, activeVideoId!!)
-                    }
-                },
+                onFetchAddonSubtitles = ::fetchAddonSubtitlesForActiveItem,
                 onStyleChanged = PlayerSettingsRepository::setSubtitleStyle,
                 onDismiss = { showSubtitleModal = false },
             )
@@ -1916,8 +2006,13 @@ fun PlayerScreen(
                 PlayerEpisodesPanel(
                     visible = showEpisodesPanel,
                     episodes = allEpisodes,
+                    parentMetaType = parentMetaType,
+                    parentMetaId = parentMetaId,
                     currentSeason = activeSeasonNumber,
                     currentEpisode = activeEpisodeNumber,
+                    progressByVideoId = watchProgressUiState.byVideoId,
+                    watchedKeys = watchedUiState.watchedKeys,
+                    blurUnwatchedEpisodes = metaScreenSettingsUiState.blurUnwatchedEpisodes,
                     episodeStreamsState = episodeStreamsPanelState.copy(
                         streamsUiState = episodeStreamsRepoState,
                     ),
@@ -1971,6 +2066,34 @@ fun PlayerScreen(
                         PlayerStreamsRepository.clearEpisodeStreams()
                         controlsVisible = true
                     },
+                )
+            }
+
+            val season = activeSeasonNumber
+            val episode = activeEpisodeNumber
+            val imdbId = activeVideoId?.split(":")?.firstOrNull()?.takeIf { it.startsWith("tt") }
+                ?: parentMetaId.takeIf { it.startsWith("tt") }
+                ?: metaUiState.meta?.id?.takeIf { it.startsWith("tt") }
+
+            if (showSubmitIntroModal && season != null && episode != null && !imdbId.isNullOrBlank()) {
+                com.nuvio.app.features.player.skip.SubmitIntroDialog(
+                    imdbId = imdbId,
+                    season = season,
+                    episode = episode,
+                    currentTimeSec = (displayedPositionMs / 1000.0),
+                    segmentType = submitIntroSegmentType,
+                    onSegmentTypeChange = { submitIntroSegmentType = it },
+                    startTimeStr = submitIntroStartTimeStr,
+                    onStartTimeChange = { submitIntroStartTimeStr = it },
+                    endTimeStr = submitIntroEndTimeStr,
+                    onEndTimeChange = { submitIntroEndTimeStr = it },
+                    onDismiss = { showSubmitIntroModal = false },
+                    onSuccess = {
+                        submitIntroStartTimeStr = "00:00"
+                        submitIntroEndTimeStr = "00:00"
+                        submitIntroSegmentType = "intro"
+                        showSubmitIntroModal = false
+                    }
                 )
             }
         }
