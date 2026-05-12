@@ -35,6 +35,11 @@ private val addonHttpClient: HttpClient = HttpClient.newBuilder()
     .followRedirects(HttpClient.Redirect.NORMAL)
     .build()
 
+private val addonHttpClientNoRedirects: HttpClient = HttpClient.newBuilder()
+    .connectTimeout(Duration.ofSeconds(60))
+    .followRedirects(HttpClient.Redirect.NEVER)
+    .build()
+
 private const val maxRawResponseBodyChars = 1024 * 1024
 private const val truncationSuffix = "\n...[truncated]"
 
@@ -54,6 +59,7 @@ private suspend fun executeRequest(
     url: String,
     headers: Map<String, String>,
     body: String,
+    followRedirects: Boolean = true,
 ) = withContext(Dispatchers.IO) {
     val builder = HttpRequest.newBuilder()
         .uri(URI.create(url))
@@ -69,7 +75,8 @@ private suspend fun executeRequest(
         builder.method(method.uppercase(), HttpRequest.BodyPublishers.noBody())
     }.build()
 
-    addonHttpClient.send(request, HttpResponse.BodyHandlers.ofString())
+    val client = if (followRedirects) addonHttpClient else addonHttpClientNoRedirects
+    client.send(request, HttpResponse.BodyHandlers.ofString())
 }
 
 private suspend fun executeTextRequest(
@@ -137,8 +144,9 @@ actual suspend fun httpRequestRaw(
     url: String,
     headers: Map<String, String>,
     body: String,
+    followRedirects: Boolean,
 ): RawHttpResponse {
-    val response = executeRequest(method, url, headers, body)
+    val response = executeRequest(method, url, headers, body, followRedirects)
     val payload = response.body()
     val limitedPayload = if (payload.length > maxRawResponseBodyChars) {
         payload.take(maxRawResponseBodyChars) + truncationSuffix

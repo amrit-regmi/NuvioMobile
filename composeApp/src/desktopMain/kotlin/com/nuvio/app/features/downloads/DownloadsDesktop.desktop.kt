@@ -2,6 +2,8 @@ package com.nuvio.app.features.downloads
 
 import com.nuvio.app.core.storage.ProfileScopedKey
 import com.nuvio.app.desktop.DesktopPreferences
+import java.io.File
+import java.net.URI
 
 internal actual object DownloadsStorage {
     private const val preferencesName = "nuvio_downloads"
@@ -33,7 +35,19 @@ internal actual object DownloadsPlatformDownloader {
     actual fun removeFile(localFileUri: String?): Boolean = false
 
     actual fun removePartialFile(destinationFileName: String): Boolean = false
+
+    actual fun resolveLocalFileUri(localFileUri: String?, destinationFileName: String): String? =
+        localFileUri
+            ?.toLocalFileOrNull()
+            ?.takeIf { it.exists() }
+            ?.toURI()
+            ?.toString()
 }
+
+private fun String.toLocalFileOrNull(): File? =
+    runCatching {
+        if (startsWith("file://")) File(URI(this)) else File(this)
+    }.getOrNull()
 
 internal actual object DownloadsLiveStatusPlatform {
     actual fun onItemsChanged(items: List<DownloadItem>) = Unit

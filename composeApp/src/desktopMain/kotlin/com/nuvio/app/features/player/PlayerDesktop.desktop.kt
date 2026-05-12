@@ -466,6 +466,8 @@ internal actual object PlayerSettingsStorage {
     private const val skipIntroEnabledKey = "skip_intro_enabled"
     private const val animeSkipEnabledKey = "animeskip_enabled"
     private const val animeSkipClientIdKey = "animeskip_client_id"
+    private const val introDbApiKeyKey = "introdb_api_key"
+    private const val introSubmitEnabledKey = "intro_submit_enabled"
     private const val streamAutoPlayNextEpisodeEnabledKey = "stream_auto_play_next_episode_enabled"
     private const val streamAutoPlayPreferBingeGroupKey = "stream_auto_play_prefer_binge_group"
     private const val nextEpisodeThresholdModeKey = "next_episode_threshold_mode"
@@ -496,6 +498,8 @@ internal actual object PlayerSettingsStorage {
         skipIntroEnabledKey,
         animeSkipEnabledKey,
         animeSkipClientIdKey,
+        introDbApiKeyKey,
+        introSubmitEnabledKey,
         streamAutoPlayNextEpisodeEnabledKey,
         streamAutoPlayPreferBingeGroupKey,
         nextEpisodeThresholdModeKey,
@@ -661,6 +665,18 @@ internal actual object PlayerSettingsStorage {
         saveString(animeSkipClientIdKey, clientId)
     }
 
+    actual fun loadIntroDbApiKey(): String? = loadString(introDbApiKeyKey)
+
+    actual fun saveIntroDbApiKey(apiKey: String) {
+        saveString(introDbApiKeyKey, apiKey)
+    }
+
+    actual fun loadIntroSubmitEnabled(): Boolean? = loadBoolean(introSubmitEnabledKey)
+
+    actual fun saveIntroSubmitEnabled(enabled: Boolean) {
+        saveBoolean(introSubmitEnabledKey, enabled)
+    }
+
     actual fun loadStreamAutoPlayNextEpisodeEnabled(): Boolean? = loadBoolean(streamAutoPlayNextEpisodeEnabledKey)
 
     actual fun saveStreamAutoPlayNextEpisodeEnabled(enabled: Boolean) {
@@ -726,6 +742,8 @@ internal actual object PlayerSettingsStorage {
         loadSkipIntroEnabled()?.let { put(skipIntroEnabledKey, encodeSyncBoolean(it)) }
         loadAnimeSkipEnabled()?.let { put(animeSkipEnabledKey, encodeSyncBoolean(it)) }
         loadAnimeSkipClientId()?.let { put(animeSkipClientIdKey, encodeSyncString(it)) }
+        loadIntroDbApiKey()?.let { put(introDbApiKeyKey, encodeSyncString(it)) }
+        loadIntroSubmitEnabled()?.let { put(introSubmitEnabledKey, encodeSyncBoolean(it)) }
         loadStreamAutoPlayNextEpisodeEnabled()?.let { put(streamAutoPlayNextEpisodeEnabledKey, encodeSyncBoolean(it)) }
         loadStreamAutoPlayPreferBingeGroup()?.let { put(streamAutoPlayPreferBingeGroupKey, encodeSyncBoolean(it)) }
         loadNextEpisodeThresholdMode()?.let { put(nextEpisodeThresholdModeKey, encodeSyncString(it)) }
@@ -760,6 +778,8 @@ internal actual object PlayerSettingsStorage {
         payload.decodeSyncBoolean(skipIntroEnabledKey)?.let(::saveSkipIntroEnabled)
         payload.decodeSyncBoolean(animeSkipEnabledKey)?.let(::saveAnimeSkipEnabled)
         payload.decodeSyncString(animeSkipClientIdKey)?.let(::saveAnimeSkipClientId)
+        payload.decodeSyncString(introDbApiKeyKey)?.let(::saveIntroDbApiKey)
+        payload.decodeSyncBoolean(introSubmitEnabledKey)?.let(::saveIntroSubmitEnabled)
         payload.decodeSyncBoolean(streamAutoPlayNextEpisodeEnabledKey)?.let(::saveStreamAutoPlayNextEpisodeEnabled)
         payload.decodeSyncBoolean(streamAutoPlayPreferBingeGroupKey)?.let(::saveStreamAutoPlayPreferBingeGroup)
         payload.decodeSyncString(nextEpisodeThresholdModeKey)?.let(::saveNextEpisodeThresholdMode)
@@ -819,7 +839,7 @@ internal actual object PlayerSettingsStorage {
 actual fun LockPlayerToLandscape() = Unit
 
 @Composable
-actual fun EnterImmersivePlayerMode() = Unit
+actual fun EnterImmersivePlayerMode(keepScreenAwake: Boolean) = Unit
 
 @Composable
 actual fun ManagePlayerPictureInPicture(

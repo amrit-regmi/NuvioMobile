@@ -367,6 +367,19 @@ tasks.matching { it.name == "packageReleaseDistributionForCurrentOS" || it.name 
     finalizedBy(renameReleaseDmgArtifact)
 }
 
+val buildDesktopMpvBridge = tasks.register<Exec>("buildDesktopMpvBridge") {
+    onlyIf { System.getProperty("os.name").contains("Mac", ignoreCase = true) }
+    workingDir = rootProject.file("MPVKit")
+    commandLine("swift", "build", "-c", "release", "--product", "DesktopMPVBridge")
+    inputs.file(rootProject.file("MPVKit/Package.swift"))
+    inputs.dir(rootProject.file("MPVKit/Sources/DesktopMPVBridge"))
+    outputs.dir(rootProject.file("MPVKit/.build"))
+}
+
+tasks.matching { it.name == "run" || it.name == "desktopRun" }.configureEach {
+    dependsOn(buildDesktopMpvBridge)
+}
+
 configurations.all {
     exclude(group = "androidx.media3", module = "media3-exoplayer")
     exclude(group = "androidx.media3", module = "media3-ui")
