@@ -1,8 +1,10 @@
 package com.nuvio.app
 
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
+import com.nuvio.app.features.player.prewarmDesktopPlaybackBackend
 import java.awt.Color as AwtColor
 
 private val DesktopWindowBackground = AwtColor(0x0D, 0x0D, 0x0D)
@@ -25,6 +27,10 @@ fun main() {
                 window.contentPane.background = DesktopWindowBackground
                 window.rootPane.background = DesktopWindowBackground
                 onDispose { }
+            }
+
+            LaunchedEffect(Unit) {
+                prewarmDesktopPlaybackBackend()
             }
 
             App()

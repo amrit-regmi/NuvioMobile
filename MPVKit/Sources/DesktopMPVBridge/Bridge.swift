@@ -27,6 +27,11 @@ public func nuvio_player_create() -> UnsafeMutableRawPointer {
     return Unmanaged.passRetained(p).toOpaque()
 }
 
+@_cdecl("nuvio_player_prewarm")
+public func nuvio_player_prewarm() {
+    NuvioPlayerPrewarmer.shared.prewarm()
+}
+
 @_cdecl("nuvio_player_destroy")
 public func nuvio_player_destroy(_ ptr: UnsafeMutableRawPointer) {
     let p = Unmanaged<NuvioPlayerWindow>.fromOpaque(ptr).takeRetainedValue()

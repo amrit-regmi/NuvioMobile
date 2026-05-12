@@ -37,6 +37,7 @@ internal interface MacOSMPVBridgeLib : Library {
     }
 
     fun nuvio_player_create(): Pointer
+    fun nuvio_player_prewarm()
     fun nuvio_player_destroy(player: Pointer)
     fun nuvio_player_show(player: Pointer)
 
