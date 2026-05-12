@@ -11,6 +11,8 @@ final class NuvioPlayerWindow {
     private var keyMonitor: Any?
     private var mouseMonitor: Any?
     private var gestureDismissWork: DispatchWorkItem?
+    private let mouseWakeThreshold: CGFloat = 8
+    private var lastControlMousePoint: NSPoint?
 
     func show() {
         DispatchQueue.main.async { [self] in
@@ -115,7 +117,14 @@ final class NuvioPlayerWindow {
             }
 
             mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { [weak self] event in
-                self?.handleMouseMoved()
+                guard let self else { return event }
+                if self.isMouseEventInsidePlayer(event) {
+                    self.handleMouseMoved(event)
+                } else if self.state.cursorHidden {
+                    NSCursor.unhide()
+                    self.state.cursorHidden = false
+                    self.lastControlMousePoint = nil
+                }
                 return event
             }
         }
@@ -140,17 +149,27 @@ final class NuvioPlayerWindow {
             mpvView?.destroyPlayer()
             containerView?.removeFromSuperview()
             containerView = nil
+            lastControlMousePoint = nil
             state.isClosed = true
             NSCursor.unhide()
         }
     }
 
-    func handleMouseMoved() {
+    func handleMouseMoved(_ event: NSEvent? = nil) {
         if state.controlsLocked {
             return
         }
+        guard let point = currentMousePointInPlayer(event), hasMeaningfulMouseMovement(to: point) else { return }
         showControls()
         scheduleHideControls()
+    }
+
+    func handleMouseExited() {
+        lastControlMousePoint = nil
+        if state.cursorHidden {
+            NSCursor.unhide()
+            state.cursorHidden = false
+        }
     }
 
     func handleMouseClicked() {
@@ -276,7 +295,8 @@ final class NuvioPlayerWindow {
             return
         }
         state.controlsVisible = false
-        if !state.cursorHidden {
+        lastControlMousePoint = currentMousePointInPlayer()
+        if !state.cursorHidden && isCurrentMouseInsidePlayer() {
             NSCursor.hide()
             state.cursorHidden = true
         }
@@ -291,11 +311,47 @@ final class NuvioPlayerWindow {
             guard let self, self.state.isPlaying else { return }
             if self.state.showSubtitlePanel || self.state.showAudioPanel || self.state.showSourcesPanel || self.state.showEpisodesPanel || self.state.showSubmitIntroPanel { return }
             self.state.controlsVisible = false
-            if !self.state.cursorHidden {
+            self.lastControlMousePoint = self.currentMousePointInPlayer()
+            if !self.state.cursorHidden && self.isCurrentMouseInsidePlayer() {
                 NSCursor.hide()
                 self.state.cursorHidden = true
             }
         }
+    }
+
+    private func isMouseEventInsidePlayer(_ event: NSEvent) -> Bool {
+        currentMousePointInPlayer(event) != nil
+    }
+
+    private func isCurrentMouseInsidePlayer() -> Bool {
+        currentMousePointInPlayer() != nil
+    }
+
+    private func currentMousePointInPlayer(_ event: NSEvent? = nil) -> NSPoint? {
+        guard let containerView else { return nil }
+        if let event {
+            guard event.window === containerView.window else { return nil }
+            let point = containerView.convert(event.locationInWindow, from: nil)
+            return containerView.bounds.contains(point) ? point : nil
+        }
+        guard let window = containerView.window else { return nil }
+        let windowPoint = window.convertPoint(fromScreen: NSEvent.mouseLocation)
+        let point = containerView.convert(windowPoint, from: nil)
+        return containerView.bounds.contains(point) ? point : nil
+    }
+
+    private func hasMeaningfulMouseMovement(to point: NSPoint) -> Bool {
+        guard let lastPoint = lastControlMousePoint else {
+            lastControlMousePoint = point
+            return state.controlsVisible
+        }
+        let dx = point.x - lastPoint.x
+        let dy = point.y - lastPoint.y
+        if dx * dx + dy * dy < mouseWakeThreshold * mouseWakeThreshold {
+            return false
+        }
+        lastControlMousePoint = point
+        return true
     }
 }
 
@@ -313,7 +369,11 @@ final class PlayerContainerView: NSView {
     }
 
     override func mouseMoved(with event: NSEvent) {
-        playerWindow?.handleMouseMoved()
+        playerWindow?.handleMouseMoved(event)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        playerWindow?.handleMouseExited()
     }
 
     override func mouseDown(with event: NSEvent) {
