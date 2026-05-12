@@ -4,9 +4,9 @@ import com.sun.jna.Library
 import com.sun.jna.Native
 import com.sun.jna.Pointer
 
-internal interface DesktopMPVBridgeLib : Library {
+internal interface MacOSMPVBridgeLib : Library {
     companion object {
-        val INSTANCE: DesktopMPVBridgeLib by lazy {
+        val INSTANCE: MacOSMPVBridgeLib by lazy {
             val libPath = resolveLibraryPath()
             if (libPath != null) {
                 System.setProperty(
@@ -14,7 +14,7 @@ internal interface DesktopMPVBridgeLib : Library {
                     (System.getProperty("jna.library.path") ?: "") + ":" + libPath,
                 )
             }
-            Native.load("DesktopMPVBridge", DesktopMPVBridgeLib::class.java)
+            Native.load("DesktopMPVBridge", MacOSMPVBridgeLib::class.java)
         }
 
         private fun resolveLibraryPath(): String? {

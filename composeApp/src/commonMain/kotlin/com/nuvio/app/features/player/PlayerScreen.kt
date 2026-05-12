@@ -1614,6 +1614,10 @@ fun PlayerScreen(
                         isSeries = parentMetaType == "series",
                     )
                     controller.setOnCloseCallback { onBackWithProgress() }
+                    controller.setOnNextEpisodeRequestedCallback {
+                        nextEpisodeAutoPlayJob?.cancel()
+                        playNextEpisode()
+                    }
                     controller.setOnAddonSubtitlesFetchCallback {
                         if (contentType != null && activeVideoId != null) {
                             SubtitleRepository.fetchAddonSubtitles(contentType, activeVideoId!!)

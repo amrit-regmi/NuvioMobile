@@ -39,6 +39,7 @@ interface PlayerEngineController {
         hasAired: Boolean = true,
     ) {}
     fun hideNextEpisode() {}
+    fun setOnNextEpisodeRequestedCallback(callback: () -> Unit) {}
     fun setOnCloseCallback(callback: () -> Unit) {}
     fun setOnAddonSubtitlesFetchCallback(callback: () -> Unit) {}
     fun pushAddonSubtitles(subtitles: List<AddonSubtitle>, isLoading: Boolean) {}
