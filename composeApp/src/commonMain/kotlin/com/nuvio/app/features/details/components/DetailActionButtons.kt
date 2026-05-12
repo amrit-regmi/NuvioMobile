@@ -25,6 +25,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.nuvio.app.core.ui.AppIconResource
 import com.nuvio.app.core.ui.appIconPainter
+import com.nuvio.app.core.ui.nuvioSecondaryClick
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.action_play
 import nuvio.composeapp.generated.resources.action_save
@@ -70,6 +71,7 @@ fun DetailActionButtons(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .nuvioSecondaryClick(onPlayLongClick)
                     .combinedClickable(
                         onClick = onPlayClick,
                         onLongClick = onPlayLongClick,
@@ -104,6 +106,7 @@ fun DetailActionButtons(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .nuvioSecondaryClick(onSaveLongClick)
                     .combinedClickable(
                         onClick = onSaveClick,
                         onLongClick = onSaveLongClick,

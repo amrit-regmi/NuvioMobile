@@ -83,6 +83,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.rememberModalBottomSheetState
 import coil3.compose.AsyncImage
+import com.nuvio.app.core.ui.nuvioSecondaryClick
 import com.nuvio.app.core.ui.nuvioSafeBottomPadding
 import com.nuvio.app.features.watchprogress.WatchProgressRepository
 import kotlinx.coroutines.launch
@@ -963,6 +964,7 @@ private fun StreamCard(
             )
             .clip(cardShape)
             .background(Color.White.copy(alpha = 0.05f))
+            .nuvioSecondaryClick(if (isEnabled) onLongClick else null)
             .combinedClickable(
                 enabled = isEnabled,
                 onClick = onClick,

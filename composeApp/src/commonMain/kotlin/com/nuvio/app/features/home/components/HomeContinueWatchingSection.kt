@@ -41,6 +41,7 @@ import coil3.compose.AsyncImage
 import com.nuvio.app.core.ui.localizedContinueWatchingSubtitle
 import com.nuvio.app.core.ui.NuvioProgressBar
 import com.nuvio.app.core.ui.NuvioShelfSection
+import com.nuvio.app.core.ui.nuvioSecondaryClick
 import com.nuvio.app.core.ui.posterCardClickable
 import com.nuvio.app.features.watchprogress.ContinueWatchingItem
 import com.nuvio.app.features.watchprogress.ContinueWatchingSectionStyle
@@ -334,6 +335,7 @@ private fun ContinueWatchingWideCard(
                 color = Color.White.copy(alpha = 0.15f),
                 shape = RoundedCornerShape(layout.cardRadius),
             )
+            .nuvioSecondaryClick(onLongClick)
             .combinedClickable(
                 enabled = onClick != null || onLongClick != null,
                 onClick = { onClick?.invoke() },
