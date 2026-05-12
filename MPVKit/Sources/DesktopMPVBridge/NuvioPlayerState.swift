@@ -37,6 +37,7 @@ struct NuvioStreamInfo: Identifiable {
     let addonName: String
     let addonId: String
     let url: String
+    let videoSize: Int64
     let isCurrent: Bool
 }
 
@@ -146,12 +147,16 @@ final class NuvioPlayerState: ObservableObject {
     var sourceFilterSelectedValue: String? = nil
     var sourceFilterChanged: Bool = false
     var sourceReloadRequested: Bool = false
+    var pendingSourceStreams: [NuvioStreamInfo] = []
+    var pendingSourceAddonGroups: [NuvioAddonGroupInfo] = []
     var episodeSelectedId: String? = nil
     var episodeStreamSelectedUrl: String? = nil
     var episodeFilterSelectedValue: String? = nil
     var episodeFilterChanged: Bool = false
     var episodeReloadRequested: Bool = false
     var episodeBackRequested: Bool = false
+    var pendingEpisodeStreams: [NuvioStreamInfo] = []
+    var pendingEpisodeAddonGroups: [NuvioAddonGroupInfo] = []
     var submitIntroRequested: Bool = false
     var submitIntroSegmentType: String = "intro"
     var submitIntroStartSec: Double = 0

@@ -148,18 +148,26 @@ internal interface MacOSMPVBridgeLib : Library {
     fun nuvio_player_pop_episode_reload(player: Pointer): Boolean
     fun nuvio_player_pop_episode_back(player: Pointer): Boolean
 
+    fun nuvio_player_begin_source_data_update(player: Pointer)
+    fun nuvio_player_stage_source_stream(player: Pointer, id: String, label: String, subtitle: String?, addonName: String, addonId: String, url: String, videoSize: Long, isCurrent: Boolean)
+    fun nuvio_player_stage_source_addon_group(player: Pointer, id: String, addonName: String, addonId: String, isLoading: Boolean, hasError: Boolean)
+    fun nuvio_player_commit_source_data_update(player: Pointer, loading: Boolean, selectedFilter: String?)
     fun nuvio_player_set_sources_loading(player: Pointer, loading: Boolean)
     fun nuvio_player_clear_source_streams(player: Pointer)
-    fun nuvio_player_add_source_stream(player: Pointer, id: String, label: String, subtitle: String?, addonName: String, addonId: String, url: String, isCurrent: Boolean)
+    fun nuvio_player_add_source_stream(player: Pointer, id: String, label: String, subtitle: String?, addonName: String, addonId: String, url: String, videoSize: Long, isCurrent: Boolean)
     fun nuvio_player_clear_source_addon_groups(player: Pointer)
     fun nuvio_player_add_source_addon_group(player: Pointer, id: String, addonName: String, addonId: String, isLoading: Boolean, hasError: Boolean)
     fun nuvio_player_set_source_selected_filter(player: Pointer, addonId: String?)
 
     fun nuvio_player_clear_episodes(player: Pointer)
     fun nuvio_player_add_episode(player: Pointer, id: String, title: String, overview: String?, thumbnail: String?, season: Int, episode: Int)
+    fun nuvio_player_begin_episode_streams_data_update(player: Pointer)
+    fun nuvio_player_stage_episode_stream(player: Pointer, id: String, label: String, subtitle: String?, addonName: String, addonId: String, url: String, videoSize: Long, isCurrent: Boolean)
+    fun nuvio_player_stage_episode_addon_group(player: Pointer, id: String, addonName: String, addonId: String, isLoading: Boolean, hasError: Boolean)
+    fun nuvio_player_commit_episode_streams_data_update(player: Pointer, loading: Boolean, selectedFilter: String?)
     fun nuvio_player_set_episode_streams_loading(player: Pointer, loading: Boolean)
     fun nuvio_player_clear_episode_streams(player: Pointer)
-    fun nuvio_player_add_episode_stream(player: Pointer, id: String, label: String, subtitle: String?, addonName: String, addonId: String, url: String, isCurrent: Boolean)
+    fun nuvio_player_add_episode_stream(player: Pointer, id: String, label: String, subtitle: String?, addonName: String, addonId: String, url: String, videoSize: Long, isCurrent: Boolean)
     fun nuvio_player_clear_episode_addon_groups(player: Pointer)
     fun nuvio_player_add_episode_addon_group(player: Pointer, id: String, addonName: String, addonId: String, isLoading: Boolean, hasError: Boolean)
     fun nuvio_player_set_episode_selected_filter(player: Pointer, addonId: String?)

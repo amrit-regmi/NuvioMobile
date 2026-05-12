@@ -13,6 +13,14 @@ private func player(_ ptr: UnsafeMutableRawPointer) -> NuvioPlayerWindow {
     return Unmanaged<NuvioPlayerWindow>.fromOpaque(ptr).takeUnretainedValue()
 }
 
+private func onMainSync(_ work: () -> Void) {
+    if Thread.isMainThread {
+        work()
+    } else {
+        DispatchQueue.main.sync(execute: work)
+    }
+}
+
 @_cdecl("nuvio_player_create")
 public func nuvio_player_create() -> UnsafeMutableRawPointer {
     let p = NuvioPlayerWindow()
@@ -539,6 +547,75 @@ public func nuvio_player_pop_episode_back(_ ptr: UnsafeMutableRawPointer) -> Boo
     return v
 }
 
+@_cdecl("nuvio_player_begin_source_data_update")
+public func nuvio_player_begin_source_data_update(_ ptr: UnsafeMutableRawPointer) {
+    let p = player(ptr)
+    p.state.pendingSourceStreams = []
+    p.state.pendingSourceAddonGroups = []
+}
+
+@_cdecl("nuvio_player_stage_source_stream")
+public func nuvio_player_stage_source_stream(
+    _ ptr: UnsafeMutableRawPointer,
+    _ id: UnsafePointer<CChar>,
+    _ label: UnsafePointer<CChar>,
+    _ subtitle: UnsafePointer<CChar>?,
+    _ addonName: UnsafePointer<CChar>,
+    _ addonId: UnsafePointer<CChar>,
+    _ url: UnsafePointer<CChar>,
+    _ videoSize: Int64,
+    _ isCurrent: Bool
+) {
+    let info = NuvioStreamInfo(
+        id: String(cString: id),
+        label: String(cString: label),
+        subtitle: subtitle.map { String(cString: $0) },
+        addonName: String(cString: addonName),
+        addonId: String(cString: addonId),
+        url: String(cString: url),
+        videoSize: videoSize,
+        isCurrent: isCurrent
+    )
+    player(ptr).state.pendingSourceStreams.append(info)
+}
+
+@_cdecl("nuvio_player_stage_source_addon_group")
+public func nuvio_player_stage_source_addon_group(
+    _ ptr: UnsafeMutableRawPointer,
+    _ id: UnsafePointer<CChar>,
+    _ addonName: UnsafePointer<CChar>,
+    _ addonId: UnsafePointer<CChar>,
+    _ isLoading: Bool,
+    _ hasError: Bool
+) {
+    let info = NuvioAddonGroupInfo(
+        id: String(cString: id),
+        addonName: String(cString: addonName),
+        addonId: String(cString: addonId),
+        isLoading: isLoading,
+        hasError: hasError
+    )
+    player(ptr).state.pendingSourceAddonGroups.append(info)
+}
+
+@_cdecl("nuvio_player_commit_source_data_update")
+public func nuvio_player_commit_source_data_update(
+    _ ptr: UnsafeMutableRawPointer,
+    _ loading: Bool,
+    _ selectedFilter: UnsafePointer<CChar>?
+) {
+    let p = player(ptr)
+    let streams = p.state.pendingSourceStreams
+    let groups = p.state.pendingSourceAddonGroups
+    let filter = selectedFilter.map { String(cString: $0) }
+    onMainSync {
+        p.state.sourceSelectedFilter = filter
+        p.state.sourceAddonGroups = groups
+        p.state.sourceStreams = streams
+        p.state.sourcesLoading = loading
+    }
+}
+
 @_cdecl("nuvio_player_set_sources_loading")
 public func nuvio_player_set_sources_loading(_ ptr: UnsafeMutableRawPointer, _ loading: Bool) {
     let p = player(ptr)
@@ -560,6 +637,7 @@ public func nuvio_player_add_source_stream(
     _ addonName: UnsafePointer<CChar>,
     _ addonId: UnsafePointer<CChar>,
     _ url: UnsafePointer<CChar>,
+    _ videoSize: Int64,
     _ isCurrent: Bool
 ) {
     let info = NuvioStreamInfo(
@@ -569,6 +647,7 @@ public func nuvio_player_add_source_stream(
         addonName: String(cString: addonName),
         addonId: String(cString: addonId),
         url: String(cString: url),
+        videoSize: videoSize,
         isCurrent: isCurrent
     )
     let p = player(ptr)
@@ -636,6 +715,75 @@ public func nuvio_player_add_episode(
     DispatchQueue.main.async { p.state.episodes.append(info) }
 }
 
+@_cdecl("nuvio_player_begin_episode_streams_data_update")
+public func nuvio_player_begin_episode_streams_data_update(_ ptr: UnsafeMutableRawPointer) {
+    let p = player(ptr)
+    p.state.pendingEpisodeStreams = []
+    p.state.pendingEpisodeAddonGroups = []
+}
+
+@_cdecl("nuvio_player_stage_episode_stream")
+public func nuvio_player_stage_episode_stream(
+    _ ptr: UnsafeMutableRawPointer,
+    _ id: UnsafePointer<CChar>,
+    _ label: UnsafePointer<CChar>,
+    _ subtitle: UnsafePointer<CChar>?,
+    _ addonName: UnsafePointer<CChar>,
+    _ addonId: UnsafePointer<CChar>,
+    _ url: UnsafePointer<CChar>,
+    _ videoSize: Int64,
+    _ isCurrent: Bool
+) {
+    let info = NuvioStreamInfo(
+        id: String(cString: id),
+        label: String(cString: label),
+        subtitle: subtitle.map { String(cString: $0) },
+        addonName: String(cString: addonName),
+        addonId: String(cString: addonId),
+        url: String(cString: url),
+        videoSize: videoSize,
+        isCurrent: isCurrent
+    )
+    player(ptr).state.pendingEpisodeStreams.append(info)
+}
+
+@_cdecl("nuvio_player_stage_episode_addon_group")
+public func nuvio_player_stage_episode_addon_group(
+    _ ptr: UnsafeMutableRawPointer,
+    _ id: UnsafePointer<CChar>,
+    _ addonName: UnsafePointer<CChar>,
+    _ addonId: UnsafePointer<CChar>,
+    _ isLoading: Bool,
+    _ hasError: Bool
+) {
+    let info = NuvioAddonGroupInfo(
+        id: String(cString: id),
+        addonName: String(cString: addonName),
+        addonId: String(cString: addonId),
+        isLoading: isLoading,
+        hasError: hasError
+    )
+    player(ptr).state.pendingEpisodeAddonGroups.append(info)
+}
+
+@_cdecl("nuvio_player_commit_episode_streams_data_update")
+public func nuvio_player_commit_episode_streams_data_update(
+    _ ptr: UnsafeMutableRawPointer,
+    _ loading: Bool,
+    _ selectedFilter: UnsafePointer<CChar>?
+) {
+    let p = player(ptr)
+    let streams = p.state.pendingEpisodeStreams
+    let groups = p.state.pendingEpisodeAddonGroups
+    let filter = selectedFilter.map { String(cString: $0) }
+    onMainSync {
+        p.state.episodeSelectedFilter = filter
+        p.state.episodeAddonGroups = groups
+        p.state.episodeStreams = streams
+        p.state.episodeStreamsLoading = loading
+    }
+}
+
 @_cdecl("nuvio_player_set_episode_streams_loading")
 public func nuvio_player_set_episode_streams_loading(_ ptr: UnsafeMutableRawPointer, _ loading: Bool) {
     let p = player(ptr)
@@ -657,6 +805,7 @@ public func nuvio_player_add_episode_stream(
     _ addonName: UnsafePointer<CChar>,
     _ addonId: UnsafePointer<CChar>,
     _ url: UnsafePointer<CChar>,
+    _ videoSize: Int64,
     _ isCurrent: Bool
 ) {
     let info = NuvioStreamInfo(
@@ -666,6 +815,7 @@ public func nuvio_player_add_episode_stream(
         addonName: String(cString: addonName),
         addonId: String(cString: addonId),
         url: String(cString: url),
+        videoSize: videoSize,
         isCurrent: isCurrent
     )
     let p = player(ptr)

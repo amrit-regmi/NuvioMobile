@@ -377,6 +377,9 @@ struct NuvioControlsView: View {
                     })
                     if state.hasVideoId {
                         actionPillButton(icon: "arrow.left.arrow.right", label: "Sources", action: {
+                            if state.sourceStreams.isEmpty && state.sourceAddonGroups.isEmpty {
+                                state.sourcesLoading = true
+                            }
                             state.sourcesOpenRequested = true
                             state.showSourcesPanel = true
                             state.showEpisodesPanel = false

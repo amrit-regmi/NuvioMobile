@@ -320,11 +320,9 @@ internal object MacOSMpvPlayerBackend : DesktopPlaybackBackend {
                     selectedFilter: String?,
                     currentStreamUrl: String?,
                 ) {
-                    bridge.nuvio_player_set_sources_loading(playerPtr, loading)
-                    bridge.nuvio_player_set_source_selected_filter(playerPtr, selectedFilter)
-                    bridge.nuvio_player_clear_source_addon_groups(playerPtr)
+                    bridge.nuvio_player_begin_source_data_update(playerPtr)
                     groups.forEach { group ->
-                        bridge.nuvio_player_add_source_addon_group(
+                        bridge.nuvio_player_stage_source_addon_group(
                             playerPtr,
                             group.addonId,
                             group.addonName,
@@ -333,9 +331,8 @@ internal object MacOSMpvPlayerBackend : DesktopPlaybackBackend {
                             group.error != null,
                         )
                     }
-                    bridge.nuvio_player_clear_source_streams(playerPtr)
                     streams.forEach { stream ->
-                        bridge.nuvio_player_add_source_stream(
+                        bridge.nuvio_player_stage_source_stream(
                             playerPtr,
                             stream.addonId + "_" + (stream.url ?: stream.infoHash ?: ""),
                             stream.streamLabel,
@@ -343,9 +340,11 @@ internal object MacOSMpvPlayerBackend : DesktopPlaybackBackend {
                             stream.addonName,
                             stream.addonId,
                             stream.directPlaybackUrl ?: "",
+                            stream.behaviorHints.videoSize ?: 0L,
                             stream.directPlaybackUrl == currentStreamUrl,
                         )
                     }
+                    bridge.nuvio_player_commit_source_data_update(playerPtr, loading, selectedFilter)
                 }
 
                 override fun pushEpisodes(episodes: List<MetaVideo>) {
@@ -370,11 +369,9 @@ internal object MacOSMpvPlayerBackend : DesktopPlaybackBackend {
                     selectedFilter: String?,
                     currentStreamUrl: String?,
                 ) {
-                    bridge.nuvio_player_set_episode_streams_loading(playerPtr, loading)
-                    bridge.nuvio_player_set_episode_selected_filter(playerPtr, selectedFilter)
-                    bridge.nuvio_player_clear_episode_addon_groups(playerPtr)
+                    bridge.nuvio_player_begin_episode_streams_data_update(playerPtr)
                     groups.forEach { group ->
-                        bridge.nuvio_player_add_episode_addon_group(
+                        bridge.nuvio_player_stage_episode_addon_group(
                             playerPtr,
                             group.addonId,
                             group.addonName,
@@ -383,9 +380,8 @@ internal object MacOSMpvPlayerBackend : DesktopPlaybackBackend {
                             group.error != null,
                         )
                     }
-                    bridge.nuvio_player_clear_episode_streams(playerPtr)
                     streams.forEach { stream ->
-                        bridge.nuvio_player_add_episode_stream(
+                        bridge.nuvio_player_stage_episode_stream(
                             playerPtr,
                             stream.addonId + "_" + (stream.url ?: stream.infoHash ?: ""),
                             stream.streamLabel,
@@ -393,9 +389,11 @@ internal object MacOSMpvPlayerBackend : DesktopPlaybackBackend {
                             stream.addonName,
                             stream.addonId,
                             stream.directPlaybackUrl ?: "",
+                            stream.behaviorHints.videoSize ?: 0L,
                             stream.directPlaybackUrl == currentStreamUrl,
                         )
                     }
+                    bridge.nuvio_player_commit_episode_streams_data_update(playerPtr, loading, selectedFilter)
                 }
 
                 override fun showEpisodeStreamsView(season: Int?, episode: Int?, title: String?) {

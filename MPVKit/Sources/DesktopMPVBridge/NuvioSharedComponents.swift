@@ -56,6 +56,34 @@ func addonFilterChip(label: String, isSelected: Bool, isLoading: Bool, hasError:
     .buttonStyle(.plain)
 }
 
+func streamSizeBadge(bytes: Int64) -> some View {
+    Text(formattedStreamVideoSize(bytes))
+        .font(.system(size: 11, weight: .semibold))
+        .foregroundColor(.white)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(Color.black.opacity(0.45))
+        .clipShape(Capsule())
+}
+
+func formattedStreamVideoSize(_ bytes: Int64) -> String {
+    let value = Double(bytes)
+    let gib = value / 1_073_741_824.0
+    if gib >= 1.0 {
+        return "\(roundedStreamSize(gib)) GB"
+    }
+    let mib = value / 1_048_576.0
+    return "\(Int(mib.rounded())) MB"
+}
+
+func roundedStreamSize(_ value: Double) -> String {
+    let rounded = (value * 10).rounded() / 10
+    if rounded == Double(Int(rounded)) {
+        return "\(Int(rounded))"
+    }
+    return String(format: "%.1f", rounded)
+}
+
 struct GestureFeedbackPill: View {
     let feedback: GestureFeedbackState
 

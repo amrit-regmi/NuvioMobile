@@ -132,7 +132,10 @@ object PlayerStreamsRepository {
 
         setRequestKey(requestKey)
         jobHolder()?.cancel()
-        stateFlow.value = StreamsUiState()
+        stateFlow.value = StreamsUiState(
+            requestToken = requestKey,
+            isAnyLoading = true,
+        )
 
         val embeddedStreams = MetaDetailsRepository.findEmbeddedStreams(videoId)
         if (embeddedStreams.isNotEmpty()) {
@@ -144,6 +147,7 @@ object PlayerStreamsRepository {
                 isLoading = false,
             )
             stateFlow.value = StreamsUiState(
+                requestToken = requestKey,
                 groups = listOf(group),
                 activeAddonIds = setOf("embedded"),
                 isAnyLoading = false,
@@ -161,6 +165,7 @@ object PlayerStreamsRepository {
 
         if (installedAddons.isEmpty() && pluginScrapers.isEmpty()) {
             stateFlow.value = StreamsUiState(
+                requestToken = requestKey,
                 isAnyLoading = false,
                 emptyStateReason = com.nuvio.app.features.streams.StreamsEmptyStateReason.NoAddonsInstalled,
             )
@@ -187,6 +192,7 @@ object PlayerStreamsRepository {
 
         if (streamAddons.isEmpty() && pluginScrapers.isEmpty()) {
             stateFlow.value = StreamsUiState(
+                requestToken = requestKey,
                 isAnyLoading = false,
                 emptyStateReason = com.nuvio.app.features.streams.StreamsEmptyStateReason.NoCompatibleAddons,
             )
@@ -209,6 +215,7 @@ object PlayerStreamsRepository {
             )
         }
         stateFlow.value = StreamsUiState(
+            requestToken = requestKey,
             groups = initialGroups,
             activeAddonIds = initialGroups.map { it.addonId }.toSet(),
             isAnyLoading = true,

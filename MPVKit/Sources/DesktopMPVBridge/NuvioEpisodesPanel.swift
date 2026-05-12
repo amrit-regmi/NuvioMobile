@@ -301,11 +301,16 @@ struct NuvioEpisodesPanel: View {
                             .foregroundColor(.white.opacity(0.6))
                             .lineLimit(2)
                     }
-                    Text(stream.addonName)
-                        .font(.system(size: 11))
-                        .italic()
-                        .foregroundColor(.white.opacity(0.6))
-                        .lineLimit(1)
+                    HStack(spacing: 8) {
+                        if stream.videoSize > 0 {
+                            streamSizeBadge(bytes: stream.videoSize)
+                        }
+                        Text(stream.addonName)
+                            .font(.system(size: 11))
+                            .italic()
+                            .foregroundColor(.white.opacity(0.6))
+                            .lineLimit(1)
+                    }
                 }
                 Spacer()
             }

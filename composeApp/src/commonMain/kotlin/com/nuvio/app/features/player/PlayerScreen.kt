@@ -273,6 +273,35 @@ fun PlayerScreen(
         val canSubmitIntro = isSeries &&
             playerSettingsUiState.introSubmitEnabled &&
             playerSettingsUiState.introDbApiKey.isNotBlank()
+        val activeContentType = contentType ?: parentMetaType
+        val activeSourceRequestToken = remember(
+            activeContentType,
+            activeVideoId,
+            activeSeasonNumber,
+            activeEpisodeNumber,
+        ) {
+            activeVideoId?.let {
+                playerStreamsRequestToken(
+                    type = activeContentType,
+                    videoId = it,
+                    season = activeSeasonNumber,
+                    episode = activeEpisodeNumber,
+                )
+            }
+        }
+        val activeEpisodeStreamsRequestToken = remember(
+            activeContentType,
+            episodeStreamsPanelState.selectedEpisode,
+        ) {
+            episodeStreamsPanelState.selectedEpisode?.let {
+                playerStreamsRequestToken(
+                    type = activeContentType,
+                    videoId = it.id,
+                    season = it.season,
+                    episode = it.episode,
+                )
+            }
+        }
 
         // Skip intro/outro/recap state
         var skipIntervals by remember { mutableStateOf<List<SkipInterval>>(emptyList()) }
@@ -1172,7 +1201,16 @@ fun PlayerScreen(
             playerController?.pushAddonSubtitles(addonSubtitles, isLoadingAddonSubtitles)
         }
 
-        LaunchedEffect(playerController, sourceStreamsState) {
+        LaunchedEffect(playerController, sourceStreamsState, activeSourceRequestToken) {
+            val requestToken = sourceStreamsState.requestToken ?: return@LaunchedEffect
+            if (requestToken != activeSourceRequestToken) return@LaunchedEffect
+            if (
+                sourceStreamsState.groups.isEmpty() &&
+                !sourceStreamsState.isAnyLoading &&
+                sourceStreamsState.emptyStateReason == null
+            ) {
+                return@LaunchedEffect
+            }
             playerController?.pushSourceData(
                 streams = sourceStreamsState.allStreams,
                 groups = sourceStreamsState.groups,
@@ -1182,7 +1220,16 @@ fun PlayerScreen(
             )
         }
 
-        LaunchedEffect(playerController, episodeStreamsRepoState) {
+        LaunchedEffect(playerController, episodeStreamsRepoState, activeEpisodeStreamsRequestToken) {
+            val requestToken = episodeStreamsRepoState.requestToken ?: return@LaunchedEffect
+            if (requestToken != activeEpisodeStreamsRequestToken) return@LaunchedEffect
+            if (
+                episodeStreamsRepoState.groups.isEmpty() &&
+                !episodeStreamsRepoState.isAnyLoading &&
+                episodeStreamsRepoState.emptyStateReason == null
+            ) {
+                return@LaunchedEffect
+            }
             playerController?.pushEpisodeStreamsData(
                 streams = episodeStreamsRepoState.allStreams,
                 groups = episodeStreamsRepoState.groups,
@@ -2161,6 +2208,13 @@ private fun <T> findPreferredTrackIndex(
     }
     return -1
 }
+
+private fun playerStreamsRequestToken(
+    type: String,
+    videoId: String,
+    season: Int?,
+    episode: Int?,
+): String = "$type::$videoId::$season::$episode"
 
 private fun findPreferredSubtitleTrackIndex(
     tracks: List<SubtitleTrack>,
