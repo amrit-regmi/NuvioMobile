@@ -66,9 +66,13 @@ struct NuvioControlsView: View {
     var onAddSubtitleUrl: ((String) -> Void)?
     var onRemoveExternalAndSelect: ((Int) -> Void)?
     var onFetchAddonSubtitles: (() -> Void)?
+    var onSubmitIntro: ((String, Double, Double) -> Void)?
 
     @State private var isDragging = false
     @State private var dragPosition: Double = 0
+    @State private var submitIntroSegmentType = "intro"
+    @State private var submitIntroStartTime = "00:00"
+    @State private var submitIntroEndTime = "00:00"
 
     var body: some View {
         GeometryReader { geometry in
@@ -77,7 +81,11 @@ struct NuvioControlsView: View {
                 Color.clear
                     .contentShape(Rectangle())
                     .onTapGesture {
-                        state.controlsVisible.toggle()
+                        if state.controlsLocked {
+                            state.lockedOverlayVisible = true
+                        } else {
+                            state.controlsVisible.toggle()
+                        }
                     }
 
                 Group {
@@ -99,10 +107,10 @@ struct NuvioControlsView: View {
                             .padding(.bottom, metrics.sliderBottomOffset)
                     }
                 }
-                .opacity(state.controlsVisible ? 1 : 0)
+                .opacity(state.controlsVisible && !state.controlsLocked ? 1 : 0)
                 .animation(.easeInOut(duration: 0.25), value: state.controlsVisible)
 
-                if state.skipButtonType != nil {
+                if !state.controlsLocked && state.skipButtonType != nil {
                     VStack {
                         Spacer()
                         HStack {
@@ -114,7 +122,7 @@ struct NuvioControlsView: View {
                     }
                 }
 
-                if state.showNextEpisode {
+                if !state.controlsLocked && state.showNextEpisode {
                     VStack {
                         Spacer()
                         HStack {
@@ -141,6 +149,14 @@ struct NuvioControlsView: View {
                         },
                         onDismiss: { state.showAudioPanel = false }
                     )
+                }
+
+                if state.showSubmitIntroPanel {
+                    submitIntroModal
+                }
+
+                if state.controlsLocked && state.lockedOverlayVisible {
+                    lockedOverlay
                 }
 
                 if state.showSourcesPanel {
@@ -237,18 +253,45 @@ struct NuvioControlsView: View {
                 }
             }
             Spacer()
-            Button(action: onClose) {
-                Image(systemName: "xmark")
-                    .font(.system(size: metrics.headerIconSize, weight: .semibold))
-                    .foregroundColor(.white)
-                    .frame(width: metrics.headerIconSize + 16, height: metrics.headerIconSize + 16)
-                    .background(Color.black.opacity(0.35))
-                    .clipShape(Circle())
+            HStack(spacing: 10) {
+                if state.canSubmitIntro {
+                    headerIconButton(icon: "flag.fill", size: metrics.headerIconSize) {
+                        state.showSubmitIntroPanel = true
+                    }
+                }
+                headerIconButton(icon: state.controlsLocked ? "lock.open.fill" : "lock.fill", size: metrics.headerIconSize) {
+                    if state.controlsLocked {
+                        state.controlsLocked = false
+                        state.lockedOverlayVisible = false
+                        state.controlsVisible = true
+                    } else {
+                        state.controlsLocked = true
+                        state.controlsVisible = false
+                        state.lockedOverlayVisible = false
+                        state.showSubtitlePanel = false
+                        state.showAudioPanel = false
+                        state.showSourcesPanel = false
+                        state.showEpisodesPanel = false
+                        state.showSubmitIntroPanel = false
+                    }
+                }
+                headerIconButton(icon: "xmark", size: metrics.headerIconSize, action: onClose)
             }
-            .buttonStyle(.plain)
         }
         .padding(.horizontal, 28)
         .padding(.top, 16)
+    }
+
+    func headerIconButton(icon: String, size: CGFloat, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: size, weight: .semibold))
+                .foregroundColor(.white)
+                .frame(width: size + 16, height: size + 16)
+                .background(Color.black.opacity(0.35))
+                .clipShape(Circle())
+        }
+        .buttonStyle(.plain)
     }
 
     func centerControls(metrics: ControlMetrics) -> some View {
@@ -662,6 +705,183 @@ struct NuvioControlsView: View {
         }
     }
 
+    var lockedOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.45)
+                .onTapGesture {
+                    state.lockedOverlayVisible = false
+                }
+
+            Button(action: {
+                state.controlsLocked = false
+                state.lockedOverlayVisible = false
+                state.controlsVisible = true
+            }) {
+                HStack(spacing: 10) {
+                    Image(systemName: "lock.open.fill")
+                        .font(.system(size: 18, weight: .semibold))
+                    Text("Unlock")
+                        .font(.system(size: 15, weight: .bold))
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, 22)
+                .padding(.vertical, 14)
+                .background(Color.white.opacity(0.16))
+                .clipShape(Capsule())
+                .overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    var submitIntroModal: some View {
+        ZStack {
+            Color.black.opacity(0.6)
+                .onTapGesture { state.showSubmitIntroPanel = false }
+
+            VStack(spacing: 16) {
+                HStack {
+                    Text("Submit Timestamps")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundColor(.white)
+                    Spacer()
+                    Button(action: { state.showSubmitIntroPanel = false }) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(.white)
+                            .frame(width: 32, height: 32)
+                            .background(Color.white.opacity(0.15))
+                            .clipShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                HStack(spacing: 8) {
+                    submitSegmentButton(title: "Intro", value: "intro")
+                    submitSegmentButton(title: "Recap", value: "recap")
+                    submitSegmentButton(title: "Outro", value: "outro")
+                }
+
+                submitTimeRow(title: "Start Time", text: $submitIntroStartTime)
+                submitTimeRow(title: "End Time", text: $submitIntroEndTime)
+
+                HStack(spacing: 12) {
+                    Button(action: { state.showSubmitIntroPanel = false }) {
+                        Text("Cancel")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(.white.opacity(0.75))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .background(Color.white.opacity(0.08))
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                    }
+                    .buttonStyle(.plain)
+
+                    Button(action: {
+                        guard let start = parseSubmitTime(submitIntroStartTime),
+                              let end = parseSubmitTime(submitIntroEndTime),
+                              end > start else { return }
+                        onSubmitIntro?(submitIntroSegmentType, start, end)
+                        state.showSubmitIntroPanel = false
+                    }) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "paperplane.fill")
+                                .font(.system(size: 13, weight: .bold))
+                            Text("Submit")
+                                .font(.system(size: 14, weight: .bold))
+                        }
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(Color.blue)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(20)
+            .frame(width: 420)
+            .background(Color(red: 0.12, green: 0.12, blue: 0.12))
+            .clipShape(RoundedRectangle(cornerRadius: 24))
+            .overlay(
+                RoundedRectangle(cornerRadius: 24)
+                    .stroke(Color.white.opacity(0.1), lineWidth: 1)
+            )
+            .onAppear {
+                if submitIntroStartTime == "00:00" && submitIntroEndTime == "00:00" {
+                    submitIntroStartTime = formatSubmitTime(Double(state.positionMs) / 1000.0)
+                    submitIntroEndTime = formatSubmitTime(Double(state.positionMs) / 1000.0)
+                }
+            }
+        }
+    }
+
+    func submitSegmentButton(title: String, value: String) -> some View {
+        let selected = submitIntroSegmentType == value
+        return Button(action: { submitIntroSegmentType = value }) {
+            Text(title)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundColor(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+                .background(selected ? Color.white.opacity(0.2) : Color.white.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+        }
+        .buttonStyle(.plain)
+    }
+
+    func submitTimeRow(title: String, text: Binding<String>) -> some View {
+        HStack(spacing: 10) {
+            Text(title)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(.white.opacity(0.75))
+                .frame(width: 92, alignment: .leading)
+            TextField("00:00", text: text)
+                .textFieldStyle(.plain)
+                .font(.system(size: 15, weight: .semibold, design: .monospaced))
+                .foregroundColor(.white)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(Color.white.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+            Button(action: {
+                text.wrappedValue = formatSubmitTime(Double(state.positionMs) / 1000.0)
+            }) {
+                Text("Now")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(Color.white.opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    func parseSubmitTime(_ value: String) -> Double? {
+        let parts = value.split(separator: ":").map(String.init)
+        guard parts.count == 2 || parts.count == 3 else { return nil }
+        let numbers = parts.compactMap(Double.init)
+        guard numbers.count == parts.count else { return nil }
+        if numbers.contains(where: { $0 < 0 }) { return nil }
+        if numbers.count == 2 {
+            return numbers[0] * 60 + numbers[1]
+        }
+        return numbers[0] * 3600 + numbers[1] * 60 + numbers[2]
+    }
+
+    func formatSubmitTime(_ seconds: Double) -> String {
+        let total = max(Int(seconds.rounded(.down)), 0)
+        let h = total / 3600
+        let m = (total / 60) % 60
+        let s = total % 60
+        if h > 0 {
+            return "\(h):\(String(format: "%02d", m)):\(String(format: "%02d", s))"
+        }
+        return "\(String(format: "%02d", m)):\(String(format: "%02d", s))"
+    }
+
     var subtitleModal: some View {
         ZStack {
             Color.black.opacity(0.6)
@@ -740,12 +960,14 @@ struct NuvioControlsView: View {
                 lang: "",
                 isSelected: !state.subtitleTracks.contains(where: { $0.selected })
             ) {
+                state.selectedAddonSubtitleId = nil
                 onRemoveExternalAndSelect?(-1)
                 state.showSubtitlePanel = false
             }
             ForEach(Array(state.subtitleTracks.enumerated()), id: \.element.id) { _, track in
                 let label = track.title.isEmpty ? (track.lang.isEmpty ? "Track \(track.id)" : track.lang) : track.title
                 trackRow(label: label, lang: track.lang, isSelected: track.selected) {
+                    state.selectedAddonSubtitleId = nil
                     onRemoveExternalAndSelect?(track.id)
                     state.showSubtitlePanel = false
                 }
@@ -898,9 +1120,9 @@ struct NuvioControlsView: View {
 
             Button(action: {
                 state.subtitleStyleTextColor = 0
-                state.subtitleStyleFontSize = 30
-                state.subtitleStyleOutlineEnabled = true
-                state.subtitleStyleBottomOffset = 5
+                state.subtitleStyleFontSize = 18
+                state.subtitleStyleOutlineEnabled = false
+                state.subtitleStyleBottomOffset = 20
                 applyCurrentSubtitleStyle()
             }) {
                 Text("Reset Defaults")
@@ -1002,5 +1224,3 @@ private extension Double {
         return min(max(self, range.lowerBound), range.upperBound)
     }
 }
-
-

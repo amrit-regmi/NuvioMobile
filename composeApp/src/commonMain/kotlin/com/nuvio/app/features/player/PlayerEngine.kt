@@ -29,6 +29,7 @@ interface PlayerEngineController {
         logo: String? = null,
     ) {}
     fun setPlayerFlags(hasVideoId: Boolean, isSeries: Boolean) {}
+    fun setSubmitIntroEnabled(enabled: Boolean) {}
     fun showSkipButton(type: String, endTimeMs: Long) {}
     fun hideSkipButton() {}
     fun showNextEpisode(
@@ -40,6 +41,7 @@ interface PlayerEngineController {
     ) {}
     fun hideNextEpisode() {}
     fun setOnNextEpisodeRequestedCallback(callback: () -> Unit) {}
+    fun setOnSubmitIntroSubmittedCallback(callback: (segmentType: String, startSec: Double, endSec: Double) -> Unit) {}
     fun setOnCloseCallback(callback: () -> Unit) {}
     fun setOnAddonSubtitlesFetchCallback(callback: () -> Unit) {}
     fun pushAddonSubtitles(subtitles: List<AddonSubtitle>, isLoading: Boolean) {}
@@ -69,6 +71,7 @@ interface PlayerEngineController {
         currentStreamUrl: String?,
     ) {}
     fun showEpisodeStreamsView(season: Int?, episode: Int?, title: String?) {}
+    fun dismissNativePanels() {}
     fun switchSource(url: String, audioUrl: String?, headersJson: String?) {}
 }
 

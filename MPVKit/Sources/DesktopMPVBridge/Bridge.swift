@@ -67,6 +67,12 @@ public func nuvio_player_set_is_series(_ ptr: UnsafeMutableRawPointer, _ value: 
     DispatchQueue.main.async { p.state.isSeries = value }
 }
 
+@_cdecl("nuvio_player_set_submit_intro_enabled")
+public func nuvio_player_set_submit_intro_enabled(_ ptr: UnsafeMutableRawPointer, _ enabled: Bool) {
+    let p = player(ptr)
+    DispatchQueue.main.async { p.state.canSubmitIntro = enabled }
+}
+
 @_cdecl("nuvio_player_load_file")
 public func nuvio_player_load_file(
     _ ptr: UnsafeMutableRawPointer,
@@ -345,6 +351,31 @@ public func nuvio_player_pop_next_episode_pressed(_ ptr: UnsafeMutableRawPointer
         return true
     }
     return false
+}
+
+@_cdecl("nuvio_player_pop_submit_intro_requested")
+public func nuvio_player_pop_submit_intro_requested(_ ptr: UnsafeMutableRawPointer) -> Bool {
+    let p = player(ptr)
+    if p.state.submitIntroRequested {
+        p.state.submitIntroRequested = false
+        return true
+    }
+    return false
+}
+
+@_cdecl("nuvio_player_get_submit_intro_segment_type")
+public func nuvio_player_get_submit_intro_segment_type(_ ptr: UnsafeMutableRawPointer) -> UnsafePointer<CChar>? {
+    return retainAndReturn(player(ptr).state.submitIntroSegmentType)
+}
+
+@_cdecl("nuvio_player_get_submit_intro_start_sec")
+public func nuvio_player_get_submit_intro_start_sec(_ ptr: UnsafeMutableRawPointer) -> Double {
+    return player(ptr).state.submitIntroStartSec
+}
+
+@_cdecl("nuvio_player_get_submit_intro_end_sec")
+public func nuvio_player_get_submit_intro_end_sec(_ ptr: UnsafeMutableRawPointer) -> Double {
+    return player(ptr).state.submitIntroEndSec
 }
 
 @_cdecl("nuvio_player_is_addon_subtitles_fetch_requested")
@@ -688,5 +719,19 @@ public func nuvio_player_show_episode_streams(
         p.state.selectedEpisodeNumber = episode > 0 ? Int(episode) : nil
         p.state.selectedEpisodeTitle = t
         p.state.showEpisodeStreams = true
+    }
+}
+
+@_cdecl("nuvio_player_dismiss_panels")
+public func nuvio_player_dismiss_panels(_ ptr: UnsafeMutableRawPointer) {
+    let p = player(ptr)
+    DispatchQueue.main.async {
+        p.state.showSourcesPanel = false
+        p.state.showEpisodesPanel = false
+        p.state.showEpisodeStreams = false
+        p.state.showSubtitlePanel = false
+        p.state.showAudioPanel = false
+        p.state.showSubmitIntroPanel = false
+        p.state.controlsVisible = true
     }
 }

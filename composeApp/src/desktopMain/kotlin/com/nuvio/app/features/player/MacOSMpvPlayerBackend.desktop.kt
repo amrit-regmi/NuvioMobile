@@ -49,6 +49,9 @@ internal object MacOSMpvPlayerBackend : DesktopPlaybackBackend {
         var onEpisodeReloadCallback by remember { mutableStateOf<(() -> Unit)?>(null) }
         var onEpisodeBackCallback by remember { mutableStateOf<(() -> Unit)?>(null) }
         var onNextEpisodeRequestedCallback by remember { mutableStateOf<(() -> Unit)?>(null) }
+        var onSubmitIntroSubmittedCallback by remember {
+            mutableStateOf<((String, Double, Double) -> Unit)?>(null)
+        }
 
         DisposableEffect(playerPtr) {
             bridge.nuvio_player_show(playerPtr)
@@ -68,6 +71,14 @@ internal object MacOSMpvPlayerBackend : DesktopPlaybackBackend {
             bridge.nuvio_player_load_file(playerPtr, sourceUrl, sourceAudioUrl, headersJson)
             if (playWhenReady) {
                 bridge.nuvio_player_play(playerPtr)
+            }
+        }
+
+        LaunchedEffect(playWhenReady) {
+            if (playWhenReady) {
+                bridge.nuvio_player_play(playerPtr)
+            } else {
+                bridge.nuvio_player_pause(playerPtr)
             }
         }
 
@@ -116,6 +127,11 @@ internal object MacOSMpvPlayerBackend : DesktopPlaybackBackend {
                             label = bridge.nuvio_player_get_subtitle_track_label(playerPtr, index) ?: "",
                             language = bridge.nuvio_player_get_subtitle_track_lang(playerPtr, index),
                             isSelected = bridge.nuvio_player_is_subtitle_track_selected(playerPtr, index),
+                            isForced = inferForcedSubtitleTrack(
+                                label = bridge.nuvio_player_get_subtitle_track_label(playerPtr, index),
+                                language = bridge.nuvio_player_get_subtitle_track_lang(playerPtr, index),
+                                trackId = bridge.nuvio_player_get_subtitle_track_id(playerPtr, index).toString(),
+                            ),
                         )
                     }
                 }
@@ -199,6 +215,10 @@ internal object MacOSMpvPlayerBackend : DesktopPlaybackBackend {
                     bridge.nuvio_player_set_is_series(playerPtr, isSeries)
                 }
 
+                override fun setSubmitIntroEnabled(enabled: Boolean) {
+                    bridge.nuvio_player_set_submit_intro_enabled(playerPtr, enabled)
+                }
+
                 override fun showSkipButton(type: String, endTimeMs: Long) {
                     bridge.nuvio_player_show_skip_button(playerPtr, type, endTimeMs)
                 }
@@ -223,6 +243,10 @@ internal object MacOSMpvPlayerBackend : DesktopPlaybackBackend {
 
                 override fun setOnNextEpisodeRequestedCallback(callback: () -> Unit) {
                     onNextEpisodeRequestedCallback = callback
+                }
+
+                override fun setOnSubmitIntroSubmittedCallback(callback: (String, Double, Double) -> Unit) {
+                    onSubmitIntroSubmittedCallback = callback
                 }
 
                 override fun setOnCloseCallback(callback: () -> Unit) {
@@ -378,13 +402,17 @@ internal object MacOSMpvPlayerBackend : DesktopPlaybackBackend {
                     bridge.nuvio_player_show_episode_streams(playerPtr, season ?: 0, episode ?: 0, title)
                 }
 
+                override fun dismissNativePanels() {
+                    bridge.nuvio_player_dismiss_panels(playerPtr)
+                }
+
                 override fun switchSource(url: String, audioUrl: String?, headersJson: String?) {
                     bridge.nuvio_player_load_file(playerPtr, url, audioUrl, headersJson)
                 }
             }
         }
 
-        LaunchedEffect(controller) {
+        LaunchedEffect(controller, sourceUrl) {
             onControllerReady(controller)
         }
 
@@ -423,6 +451,13 @@ internal object MacOSMpvPlayerBackend : DesktopPlaybackBackend {
                 }
                 if (bridge.nuvio_player_pop_next_episode_pressed(playerPtr)) {
                     onNextEpisodeRequestedCallback?.invoke()
+                }
+                if (bridge.nuvio_player_pop_submit_intro_requested(playerPtr)) {
+                    onSubmitIntroSubmittedCallback?.invoke(
+                        bridge.nuvio_player_get_submit_intro_segment_type(playerPtr) ?: "intro",
+                        bridge.nuvio_player_get_submit_intro_start_sec(playerPtr),
+                        bridge.nuvio_player_get_submit_intro_end_sec(playerPtr),
+                    )
                 }
                 if (bridge.nuvio_player_pop_sources_open_requested(playerPtr)) {
                     onSourcesRequestedCallback?.invoke()

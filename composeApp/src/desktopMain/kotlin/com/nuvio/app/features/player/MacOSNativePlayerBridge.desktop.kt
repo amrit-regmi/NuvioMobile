@@ -54,6 +54,7 @@ internal interface MacOSMPVBridgeLib : Library {
 
     fun nuvio_player_set_has_video_id(player: Pointer, value: Boolean)
     fun nuvio_player_set_is_series(player: Pointer, value: Boolean)
+    fun nuvio_player_set_submit_intro_enabled(player: Pointer, enabled: Boolean)
 
     fun nuvio_player_load_file(
         player: Pointer,
@@ -120,6 +121,10 @@ internal interface MacOSMPVBridgeLib : Library {
 
     fun nuvio_player_is_closed(player: Pointer): Boolean
     fun nuvio_player_pop_next_episode_pressed(player: Pointer): Boolean
+    fun nuvio_player_pop_submit_intro_requested(player: Pointer): Boolean
+    fun nuvio_player_get_submit_intro_segment_type(player: Pointer): String?
+    fun nuvio_player_get_submit_intro_start_sec(player: Pointer): Double
+    fun nuvio_player_get_submit_intro_end_sec(player: Pointer): Double
     fun nuvio_player_is_addon_subtitles_fetch_requested(player: Pointer): Boolean
     fun nuvio_player_set_addon_subtitles_loading(player: Pointer, loading: Boolean)
     fun nuvio_player_clear_addon_subtitles(player: Pointer)
@@ -159,4 +164,5 @@ internal interface MacOSMPVBridgeLib : Library {
     fun nuvio_player_add_episode_addon_group(player: Pointer, id: String, addonName: String, addonId: String, isLoading: Boolean, hasError: Boolean)
     fun nuvio_player_set_episode_selected_filter(player: Pointer, addonId: String?)
     fun nuvio_player_show_episode_streams(player: Pointer, season: Int, episode: Int, title: String?)
+    fun nuvio_player_dismiss_panels(player: Pointer)
 }

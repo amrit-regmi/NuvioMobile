@@ -69,6 +69,8 @@ final class NuvioPlayerState: ObservableObject {
 
     @Published var controlsVisible: Bool = true
     @Published var cursorHidden: Bool = false
+    @Published var controlsLocked: Bool = false
+    @Published var lockedOverlayVisible: Bool = false
 
     @Published var title: String = ""
     @Published var streamTitle: String = ""
@@ -105,9 +107,9 @@ final class NuvioPlayerState: ObservableObject {
     @Published var gestureFeedback: GestureFeedbackState? = nil
 
     @Published var subtitleStyleTextColor: Int = 0
-    @Published var subtitleStyleFontSize: Int = 30
-    @Published var subtitleStyleOutlineEnabled: Bool = true
-    @Published var subtitleStyleBottomOffset: Int = 5
+    @Published var subtitleStyleFontSize: Int = 18
+    @Published var subtitleStyleOutlineEnabled: Bool = false
+    @Published var subtitleStyleBottomOffset: Int = 20
 
     @Published var addonSubtitles: [AddonSubtitleInfo] = []
     @Published var addonSubtitlesLoading: Bool = false
@@ -120,6 +122,8 @@ final class NuvioPlayerState: ObservableObject {
     @Published var showEpisodesPanel: Bool = false
     @Published var hasVideoId: Bool = false
     @Published var isSeries: Bool = false
+    @Published var canSubmitIntro: Bool = false
+    @Published var showSubmitIntroPanel: Bool = false
 
     @Published var sourceStreams: [NuvioStreamInfo] = []
     @Published var sourceAddonGroups: [NuvioAddonGroupInfo] = []
@@ -148,6 +152,10 @@ final class NuvioPlayerState: ObservableObject {
     var episodeFilterChanged: Bool = false
     var episodeReloadRequested: Bool = false
     var episodeBackRequested: Bool = false
+    var submitIntroRequested: Bool = false
+    var submitIntroSegmentType: String = "intro"
+    var submitIntroStartSec: Double = 0
+    var submitIntroEndSec: Double = 0
 
     var resizeModeLabel: String {
         switch resizeMode {

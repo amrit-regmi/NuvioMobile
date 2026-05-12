@@ -270,6 +270,9 @@ fun PlayerScreen(
         }
         val allEpisodes = remember(playerMetaVideos) { playerMetaVideos }
         val isSeries = parentMetaType == "series"
+        val canSubmitIntro = isSeries &&
+            playerSettingsUiState.introSubmitEnabled &&
+            playerSettingsUiState.introDbApiKey.isNotBlank()
 
         // Skip intro/outro/recap state
         var skipIntervals by remember { mutableStateOf<List<SkipInterval>>(emptyList()) }
@@ -1097,6 +1100,11 @@ fun PlayerScreen(
             SubtitleRepository.fetchAddonSubtitles(type, videoId)
         }
 
+        fun resolveSubmitIntroImdbId(): String? =
+            activeVideoId?.split(":")?.firstOrNull()?.takeIf { it.startsWith("tt") }
+                ?: parentMetaId.takeIf { it.startsWith("tt") }
+                ?: metaUiState.meta?.id?.takeIf { it.startsWith("tt") }
+
         LaunchedEffect(activeSourceUrl, activeSourceAudioUrl, activeSourceHeaders, activeSourceResponseHeaders) {
             errorMessage = null
             playerController = null
@@ -1125,6 +1133,39 @@ fun PlayerScreen(
 
         LaunchedEffect(playerController, subtitleStyle) {
             playerController?.applySubtitleStyle(subtitleStyle)
+        }
+
+        LaunchedEffect(
+            playerController,
+            title,
+            activeStreamTitle,
+            activeProviderName,
+            activeSeasonNumber,
+            activeEpisodeNumber,
+            activeEpisodeTitle,
+            backdropArtwork,
+            logo,
+            activeVideoId,
+            parentMetaType,
+        ) {
+            playerController?.setMetadata(
+                title = title,
+                streamTitle = activeStreamTitle,
+                providerName = activeProviderName,
+                seasonNumber = activeSeasonNumber,
+                episodeNumber = activeEpisodeNumber,
+                episodeTitle = activeEpisodeTitle,
+                artwork = backdropArtwork,
+                logo = logo,
+            )
+            playerController?.setPlayerFlags(
+                hasVideoId = activeVideoId != null,
+                isSeries = parentMetaType == "series",
+            )
+        }
+
+        LaunchedEffect(playerController, canSubmitIntro) {
+            playerController?.setSubmitIntroEnabled(canSubmitIntro)
         }
 
         LaunchedEffect(playerController, addonSubtitles, isLoadingAddonSubtitles) {
@@ -1618,6 +1659,22 @@ fun PlayerScreen(
                         nextEpisodeAutoPlayJob?.cancel()
                         playNextEpisode()
                     }
+                    controller.setOnSubmitIntroSubmittedCallback { segmentType, startSec, endSec ->
+                        val season = activeSeasonNumber ?: return@setOnSubmitIntroSubmittedCallback
+                        val episode = activeEpisodeNumber ?: return@setOnSubmitIntroSubmittedCallback
+                        val imdbId = resolveSubmitIntroImdbId() ?: return@setOnSubmitIntroSubmittedCallback
+                        if (endSec <= startSec) return@setOnSubmitIntroSubmittedCallback
+                        scope.launch {
+                            SkipIntroRepository.submitIntro(
+                                imdbId = imdbId,
+                                season = season,
+                                episode = episode,
+                                startSec = startSec,
+                                endSec = endSec,
+                                segmentType = segmentType,
+                            )
+                        }
+                    }
                     controller.setOnAddonSubtitlesFetchCallback {
                         if (contentType != null && activeVideoId != null) {
                             SubtitleRepository.fetchAddonSubtitles(contentType, activeVideoId!!)
@@ -1638,20 +1695,6 @@ fun PlayerScreen(
                         val stream = allStreams.firstOrNull { it.directPlaybackUrl == url }
                             ?: return@setOnSourceStreamSelectedCallback
                         switchToSource(stream)
-                        val headers = sanitizePlaybackHeaders(stream.behaviorHints.proxyHeaders?.request)
-                        val headersJson = headers.takeIf { it.isNotEmpty() }?.entries
-                            ?.joinToString(",", "{", "}") { (k, v) -> "\"${k}\":\"${v}\"" }
-                        controller.switchSource(url, null, headersJson)
-                        controller.setMetadata(
-                            title = title,
-                            streamTitle = activeStreamTitle,
-                            providerName = activeProviderName,
-                            seasonNumber = activeSeasonNumber,
-                            episodeNumber = activeEpisodeNumber,
-                            episodeTitle = activeEpisodeTitle,
-                            artwork = backdropArtwork,
-                            logo = logo,
-                        )
                     }
                     controller.setOnSourceFilterChangedCallback { addonId ->
                         PlayerStreamsRepository.selectSourceFilter(addonId)
@@ -1678,6 +1721,17 @@ fun PlayerScreen(
                     controller.setOnEpisodeSelectedCallback { episodeId ->
                         val episode = playerMetaVideos.firstOrNull { it.id == episodeId }
                             ?: return@setOnEpisodeSelectedCallback
+                        val downloadedEpisode = DownloadsRepository.findPlayableDownload(
+                            parentMetaId = parentMetaId,
+                            seasonNumber = episode.season,
+                            episodeNumber = episode.episode,
+                            videoId = episode.id,
+                        )
+                        if (downloadedEpisode != null) {
+                            switchToDownloadedEpisode(downloadedEpisode, episode)
+                            controller.dismissNativePanels()
+                            return@setOnEpisodeSelectedCallback
+                        }
                         episodeStreamsPanelState = episodeStreamsPanelState.copy(
                             showStreams = true,
                             selectedEpisode = episode,
@@ -1698,20 +1752,6 @@ fun PlayerScreen(
                         val episode = playerMetaVideos.firstOrNull { it.id == episodeStreamsPanelState.selectedEpisode?.id }
                             ?: return@setOnEpisodeStreamSelectedCallback
                         switchToEpisodeStream(stream, episode)
-                        val headers = sanitizePlaybackHeaders(stream.behaviorHints.proxyHeaders?.request)
-                        val headersJson = headers.takeIf { it.isNotEmpty() }?.entries
-                            ?.joinToString(",", "{", "}") { (k, v) -> "\"${k}\":\"${v}\"" }
-                        controller.switchSource(url, null, headersJson)
-                        controller.setMetadata(
-                            title = title,
-                            streamTitle = activeStreamTitle,
-                            providerName = activeProviderName,
-                            seasonNumber = activeSeasonNumber,
-                            episodeNumber = activeEpisodeNumber,
-                            episodeTitle = activeEpisodeTitle,
-                            artwork = backdropArtwork,
-                            logo = logo,
-                        )
                     }
                     controller.setOnEpisodeFilterChangedCallback { addonId ->
                         PlayerStreamsRepository.selectEpisodeStreamsFilter(addonId)
@@ -1821,7 +1861,7 @@ fun PlayerScreen(
                     },
                     onSourcesClick = if (activeVideoId != null) { { openSourcesPanel() } } else null,
                     onEpisodesClick = if (isSeries) { { openEpisodesPanel() } } else null,
-                    onSubmitIntroClick = if (isSeries && playerSettingsUiState.introSubmitEnabled && playerSettingsUiState.introDbApiKey.isNotBlank()) { { showSubmitIntroModal = true } } else null,
+                    onSubmitIntroClick = if (canSubmitIntro) { { showSubmitIntroModal = true } } else null,
                     onScrubChange = { positionMs -> scrubbingPositionMs = positionMs },
                     onScrubFinished = { positionMs ->
                         scrubbingPositionMs = null
@@ -2075,9 +2115,7 @@ fun PlayerScreen(
 
             val season = activeSeasonNumber
             val episode = activeEpisodeNumber
-            val imdbId = activeVideoId?.split(":")?.firstOrNull()?.takeIf { it.startsWith("tt") }
-                ?: parentMetaId.takeIf { it.startsWith("tt") }
-                ?: metaUiState.meta?.id?.takeIf { it.startsWith("tt") }
+            val imdbId = resolveSubmitIntroImdbId()
 
             if (showSubmitIntroModal && season != null && episode != null && !imdbId.isNullOrBlank()) {
                 com.nuvio.app.features.player.skip.SubmitIntroDialog(

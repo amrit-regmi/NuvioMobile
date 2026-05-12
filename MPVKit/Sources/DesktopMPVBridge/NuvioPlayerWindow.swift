@@ -76,6 +76,12 @@ final class NuvioPlayerWindow {
                 },
                 onFetchAddonSubtitles: { [weak self] in
                     self?.state.addonSubtitlesFetchRequested = true
+                },
+                onSubmitIntro: { [weak self] segmentType, startSec, endSec in
+                    self?.state.submitIntroSegmentType = segmentType
+                    self?.state.submitIntroStartSec = startSec
+                    self?.state.submitIntroEndSec = endSec
+                    self?.state.submitIntroRequested = true
                 }
             )
             hostingView = NSHostingView(rootView: controlsView)
@@ -140,11 +146,18 @@ final class NuvioPlayerWindow {
     }
 
     func handleMouseMoved() {
+        if state.controlsLocked {
+            return
+        }
         showControls()
         scheduleHideControls()
     }
 
     func handleMouseClicked() {
+        if state.controlsLocked {
+            state.lockedOverlayVisible = true
+            return
+        }
         if state.controlsVisible {
             hideControlsNow()
         } else {
@@ -154,6 +167,14 @@ final class NuvioPlayerWindow {
     }
 
     func handleKeyDown(_ event: NSEvent) -> Bool {
+        if state.controlsLocked {
+            if event.keyCode == 53 {
+                close()
+                return true
+            }
+            state.lockedOverlayVisible = true
+            return true
+        }
         switch event.keyCode {
         case 53:
             close()
@@ -236,6 +257,10 @@ final class NuvioPlayerWindow {
     }
 
     private func showControls() {
+        if state.controlsLocked {
+            state.lockedOverlayVisible = true
+            return
+        }
         state.controlsVisible = true
         if state.cursorHidden {
             NSCursor.unhide()
@@ -246,6 +271,9 @@ final class NuvioPlayerWindow {
     private func hideControlsNow() {
         hideTimer?.invalidate()
         hideTimer = nil
+        if state.controlsLocked {
+            return
+        }
         state.controlsVisible = false
         if !state.cursorHidden {
             NSCursor.hide()
@@ -255,9 +283,12 @@ final class NuvioPlayerWindow {
 
     private func scheduleHideControls() {
         hideTimer?.invalidate()
+        if state.controlsLocked {
+            return
+        }
         hideTimer = Timer.scheduledTimer(withTimeInterval: 3.5, repeats: false) { [weak self] _ in
             guard let self, self.state.isPlaying else { return }
-            if self.state.showSubtitlePanel || self.state.showAudioPanel || self.state.showSourcesPanel || self.state.showEpisodesPanel { return }
+            if self.state.showSubtitlePanel || self.state.showAudioPanel || self.state.showSourcesPanel || self.state.showEpisodesPanel || self.state.showSubmitIntroPanel { return }
             self.state.controlsVisible = false
             if !self.state.cursorHidden {
                 NSCursor.hide()
