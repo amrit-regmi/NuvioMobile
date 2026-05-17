@@ -35,6 +35,12 @@ internal external fun openWebUrl(url: String): Boolean
 @JsFun("() => { try { return (globalThis.navigator?.languages ?? [globalThis.navigator?.language]).filter(Boolean).join(','); } catch (_) { return ''; } }")
 private external fun jsNavigatorLanguages(): String
 
+@JsFun("(url, headersJson, startPositionMs) => { try { return globalThis.nuvioQtPlayNative?.(url, headersJson, Number(startPositionMs || 0)) === true; } catch (_) { return false; } }")
+internal external fun playQtNativeMedia(url: String, headersJson: String, startPositionMs: Double): Boolean
+
+@JsFun("(command, value) => { try { return globalThis.nuvioQtCommandNative?.(command, Number(value || 0)) === true; } catch (_) { return false; } }")
+internal external fun commandQtNativePlayer(command: String, value: Double): Boolean
+
 internal fun webNowEpochMs(): Long = jsNowEpochMs().toLong()
 
 internal fun webTodayIsoDate(): String = jsTodayIsoDate()

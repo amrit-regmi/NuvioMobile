@@ -8,6 +8,78 @@
 </head>
 <body>
     <div id="webApp"></div>
+    <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+    <script>
+        (function () {
+            const queue = [];
+            const isQtHost = Boolean(
+                globalThis.qt &&
+                globalThis.qt.webChannelTransport &&
+                typeof globalThis.QWebChannel === "function"
+            );
+            globalThis.nuvioNativePlayerQueue = queue;
+
+            function flushQueue() {
+                const player = globalThis.nuvioNativePlayer;
+                if (!player || typeof player.playUrl !== "function") return;
+                while (queue.length > 0) {
+                    const item = queue.shift();
+                    player.playUrl(item.url, item.headersJson || "{}", Number(item.startMs || 0));
+                }
+            }
+
+            globalThis.nuvioQtPlayNative = function (url, headersJson, startMs) {
+                if (!isQtHost) return false;
+                try {
+                    const player = globalThis.nuvioNativePlayer;
+                    if (player && typeof player.playUrl === "function") {
+                        player.playUrl(url, headersJson || "{}", Number(startMs || 0));
+                        return true;
+                    }
+                    queue.push({ url: url, headersJson: headersJson || "{}", startMs: Number(startMs || 0) });
+                    return true;
+                } catch (_) {
+                    return false;
+                }
+            };
+
+            globalThis.nuvioQtCommandNative = function (command, value) {
+                if (!isQtHost) return false;
+                try {
+                    const player = globalThis.nuvioNativePlayer;
+                    if (!player) return false;
+                    switch (command) {
+                        case "pause":
+                            player.pause();
+                            return true;
+                        case "resume":
+                            player.resume();
+                            return true;
+                        case "stop":
+                            player.stop();
+                            return true;
+                        case "seekTo":
+                            player.seekTo(Number(value || 0));
+                            return true;
+                        case "seekBy":
+                            player.seekBy(Number(value || 0));
+                            return true;
+                        default:
+                            return false;
+                    }
+                } catch (_) {
+                    return false;
+                }
+            };
+
+            if (isQtHost) {
+                new QWebChannel(globalThis.qt.webChannelTransport, function (channel) {
+                    globalThis.nuvioNativePlayer = channel.objects.nuvioNativePlayer;
+                    flushQueue();
+                });
+            }
+        })();
+    </script>
     <script src="composeApp.js"></script>
 </body>
 </html>

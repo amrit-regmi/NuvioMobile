@@ -1,19 +1,30 @@
+#include "mpv_render_widget.h"
+#include "native_player_bridge.h"
+
 #include <QApplication>
 #include <QByteArray>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QKeySequence>
+#include <QMainWindow>
 #include <QMessageBox>
 #include <QObject>
+#include <QPointer>
+#include <QShortcut>
 #include <QStandardPaths>
+#include <QStackedWidget>
 #include <QString>
 #include <QUrl>
+#include <QWebChannel>
+#include <QWebEnginePage>
 #include <QWebEngineProfile>
 #include <QWebEngineSettings>
 #include <QWebEngineUrlRequestJob>
 #include <QWebEngineUrlScheme>
 #include <QWebEngineUrlSchemeHandler>
 #include <QWebEngineView>
+#include <QWidget>
 
 #ifndef NUVIO_WEB_ROOT
 #define NUVIO_WEB_ROOT ""
@@ -24,6 +35,21 @@ namespace {
 constexpr auto kScheme = "nuvio";
 constexpr auto kHost = "app";
 
+void appendChromiumFlag(const QByteArray &flag)
+{
+    auto flags = qgetenv("QTWEBENGINE_CHROMIUM_FLAGS");
+    if (flags.split(' ').contains(flag)) return;
+
+    if (!flags.isEmpty()) flags += ' ';
+    flags += flag;
+    qputenv("QTWEBENGINE_CHROMIUM_FLAGS", flags);
+}
+
+void configureProcessEnvironment()
+{
+    appendChromiumFlag("--disable-web-security");
+}
+
 void registerNuvioScheme()
 {
     QWebEngineUrlScheme scheme{QByteArray(kScheme)};
@@ -32,6 +58,7 @@ void registerNuvioScheme()
         QWebEngineUrlScheme::SecureScheme |
         QWebEngineUrlScheme::LocalScheme |
         QWebEngineUrlScheme::LocalAccessAllowed |
+        QWebEngineUrlScheme::ContentSecurityPolicyIgnored |
         QWebEngineUrlScheme::CorsEnabled |
         QWebEngineUrlScheme::FetchApiAllowed
     );
@@ -157,6 +184,7 @@ void configureProfile(QWebEngineProfile *profile)
 
 int main(int argc, char *argv[])
 {
+    configureProcessEnvironment();
     registerNuvioScheme();
 
     QApplication app(argc, argv);
@@ -177,13 +205,86 @@ int main(int argc, char *argv[])
     configureProfile(profile);
     profile->installUrlSchemeHandler(QByteArray(kScheme), new LocalWebSchemeHandler(webRoot, profile));
 
-    QWebEngineView view;
-    view.setWindowTitle("Nuvio");
-    view.resize(1280, 800);
-    view.settings()->setAttribute(QWebEngineSettings::LocalStorageEnabled, true);
-    view.settings()->setAttribute(QWebEngineSettings::LocalContentCanAccessRemoteUrls, true);
-    view.load(QUrl(QStringLiteral("nuvio://app/index.html")));
-    view.show();
+    QMainWindow window;
+    window.setWindowTitle("Nuvio");
+    window.resize(1280, 800);
+
+    auto *stack = new QStackedWidget(&window);
+    auto *webView = new QWebEngineView(stack);
+    stack->addWidget(webView);
+    stack->setCurrentWidget(webView);
+    window.setCentralWidget(stack);
+
+    NativePlayerBridge nativePlayerBridge(&window);
+    QWebChannel webChannel(webView);
+    webChannel.registerObject(QStringLiteral("nuvioNativePlayer"), &nativePlayerBridge);
+    webView->page()->setWebChannel(&webChannel);
+
+    QPointer<MpvRenderWidget> playerWindow;
+    QPointer<QWidget> playerContainer;
+    const auto ensurePlayerContainer = [&]() -> QWidget * {
+        if (playerContainer) return playerContainer;
+
+        auto *nativeWindow = new MpvRenderWidget();
+        auto *container = QWidget::createWindowContainer(nativeWindow, stack);
+        container->setFocusPolicy(Qt::StrongFocus);
+        playerWindow = nativeWindow;
+        playerContainer = container;
+        stack->addWidget(container);
+
+        QObject::connect(nativeWindow, &MpvRenderWidget::playbackStopped, &window, [stack, webView] {
+            stack->setCurrentWidget(webView);
+        });
+        QObject::connect(nativeWindow, &MpvRenderWidget::playerError, &window, [](const QString &message) {
+            qWarning().noquote() << "[NuvioPlayer]" << message;
+        });
+
+        return container;
+    };
+
+    QObject::connect(
+        &nativePlayerBridge,
+        &NativePlayerBridge::playRequested,
+        &window,
+        [stack, ensurePlayerContainer, &playerWindow](const QString &url, const QString &headersJson, qint64 startPositionMs) {
+            auto *container = ensurePlayerContainer();
+            stack->setCurrentWidget(container);
+            container->setFocus();
+            if (playerWindow) playerWindow->playUrl(url, headersJson, startPositionMs);
+        }
+    );
+    QObject::connect(&nativePlayerBridge, &NativePlayerBridge::pauseRequested, &window, [&playerWindow] {
+        if (playerWindow) playerWindow->pause();
+    });
+    QObject::connect(&nativePlayerBridge, &NativePlayerBridge::resumeRequested, &window, [&playerWindow] {
+        if (playerWindow) playerWindow->resume();
+    });
+    QObject::connect(&nativePlayerBridge, &NativePlayerBridge::seekToRequested, &window, [&playerWindow](qint64 positionMs) {
+        if (playerWindow) playerWindow->seekTo(positionMs);
+    });
+    QObject::connect(&nativePlayerBridge, &NativePlayerBridge::seekByRequested, &window, [&playerWindow](qint64 offsetMs) {
+        if (playerWindow) playerWindow->seekBy(offsetMs);
+    });
+    QObject::connect(
+        &nativePlayerBridge,
+        &NativePlayerBridge::stopRequested,
+        &window,
+        [stack, webView, &playerWindow] {
+            if (playerWindow) playerWindow->stop();
+            stack->setCurrentWidget(webView);
+        }
+    );
+
+    auto *escapeShortcut = new QShortcut(QKeySequence(Qt::Key_Escape), &window);
+    QObject::connect(escapeShortcut, &QShortcut::activated, &window, [stack, webView, &playerWindow] {
+        if (playerWindow) playerWindow->stop();
+        stack->setCurrentWidget(webView);
+    });
+
+    webView->settings()->setAttribute(QWebEngineSettings::LocalStorageEnabled, true);
+    webView->settings()->setAttribute(QWebEngineSettings::LocalContentCanAccessRemoteUrls, true);
+    webView->load(QUrl(QStringLiteral("nuvio://app/index.html")));
+    window.show();
 
     return QApplication::exec();
 }

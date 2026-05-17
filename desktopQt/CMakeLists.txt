@@ -18,18 +18,55 @@ set(NUVIO_WEB_OUTPUT "${NUVIO_REPO_ROOT}/composeApp/build/kotlin-webpack/wasmJs/
 set(NUVIO_WEB_RESOURCES "${NUVIO_REPO_ROOT}/composeApp/build/processedResources/wasmJs/main")
 set(NUVIO_WEB_STAGE "${CMAKE_CURRENT_BINARY_DIR}/web")
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets WebEngineCore WebEngineWidgets)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets WebChannel WebEngineCore WebEngineWidgets OpenGL)
+find_package(PkgConfig QUIET)
+
+if(PkgConfig_FOUND)
+    pkg_check_modules(MPV IMPORTED_TARGET mpv)
+endif()
+
+if(MPV_FOUND)
+    set(NUVIO_MPV_TARGET PkgConfig::MPV)
+else()
+    find_path(MPV_INCLUDE_DIR
+        NAMES mpv/client.h
+        HINTS ENV MPV_ROOT
+        PATH_SUFFIXES include
+    )
+    find_library(MPV_LIBRARY
+        NAMES mpv libmpv
+        HINTS ENV MPV_ROOT
+        PATH_SUFFIXES lib
+    )
+    if(NOT MPV_INCLUDE_DIR OR NOT MPV_LIBRARY)
+        message(FATAL_ERROR "libmpv was not found. Install mpv/libmpv or set MPV_ROOT.")
+    endif()
+
+    add_library(nuvio_mpv UNKNOWN IMPORTED)
+    set_target_properties(nuvio_mpv PROPERTIES
+        IMPORTED_LOCATION "${MPV_LIBRARY}"
+        INTERFACE_INCLUDE_DIRECTORIES "${MPV_INCLUDE_DIR}"
+    )
+    set(NUVIO_MPV_TARGET nuvio_mpv)
+endif()
 
 qt_add_executable(NuvioQtDesktop
     MACOSX_BUNDLE
     src/main.cpp
+    src/mpv_render_widget.cpp
+    src/mpv_render_widget.h
+    src/native_player_bridge.cpp
+    src/native_player_bridge.h
 )
 
 target_link_libraries(NuvioQtDesktop
     PRIVATE
         Qt6::Widgets
+        Qt6::WebChannel
         Qt6::WebEngineCore
         Qt6::WebEngineWidgets
+        Qt6::OpenGL
+        ${NUVIO_MPV_TARGET}
 )
 
 target_compile_definitions(NuvioQtDesktop
