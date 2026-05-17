@@ -9,7 +9,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.runBlocking
+import com.nuvio.app.core.i18n.syncString
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -24,7 +24,6 @@ import nuvio.composeapp.generated.resources.collections_import_error_folder_blan
 import nuvio.composeapp.generated.resources.collections_import_error_invalid_json
 import nuvio.composeapp.generated.resources.collections_import_error_source_blank_fields
 import nuvio.composeapp.generated.resources.collections_import_error_trakt_list_id
-import org.jetbrains.compose.resources.getString
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
 
@@ -139,7 +138,7 @@ object CollectionRepository {
         if (jsonString.isBlank()) {
             return ValidationResult(
                 valid = false,
-                error = runBlocking { getString(Res.string.collections_import_error_empty_json) },
+                error = syncString(Res.string.collections_import_error_empty_json),
             )
         }
         return try {
@@ -149,55 +148,45 @@ object CollectionRepository {
                 if (c.id.isBlank()) {
                     return ValidationResult(
                         valid = false,
-                        error = runBlocking {
-                            getString(Res.string.collections_import_error_collection_blank_id, ci + 1)
-                        },
+                        error = syncString(Res.string.collections_import_error_collection_blank_id, ci + 1),
                     )
                 }
                 if (c.title.isBlank()) {
                     return ValidationResult(
                         valid = false,
-                        error = runBlocking {
-                            getString(Res.string.collections_import_error_collection_blank_title, c.id)
-                        },
+                        error = syncString(Res.string.collections_import_error_collection_blank_title, c.id),
                     )
                 }
                 c.folders.forEachIndexed { fi, f ->
                     if (f.id.isBlank()) {
                         return ValidationResult(
                             valid = false,
-                            error = runBlocking {
-                                getString(
-                                    Res.string.collections_import_error_folder_blank_id,
-                                    fi + 1,
-                                    c.title,
-                                )
-                            },
+                            error = syncString(
+                                Res.string.collections_import_error_folder_blank_id,
+                                fi + 1,
+                                c.title,
+                            ),
                         )
                     }
                     if (f.title.isBlank()) {
                         return ValidationResult(
                             valid = false,
-                            error = runBlocking {
-                                getString(
-                                    Res.string.collections_import_error_folder_blank_title,
-                                    f.id,
-                                    c.title,
-                                )
-                            },
+                            error = syncString(
+                                Res.string.collections_import_error_folder_blank_title,
+                                f.id,
+                                c.title,
+                            ),
                         )
                     }
                     f.resolvedSources.forEachIndexed { si, s ->
                         if (s.hasInvalidTraktListId()) {
                             return ValidationResult(
                                 valid = false,
-                                error = runBlocking {
-                                    getString(
-                                        Res.string.collections_import_error_trakt_list_id,
-                                        si + 1,
-                                        f.title,
-                                    )
-                                },
+                                error = syncString(
+                                    Res.string.collections_import_error_trakt_list_id,
+                                    si + 1,
+                                    f.title,
+                                ),
                             )
                         }
 
@@ -208,13 +197,11 @@ object CollectionRepository {
                         if (invalidAddon || invalidTmdb) {
                             return ValidationResult(
                                 valid = false,
-                                error = runBlocking {
-                                    getString(
-                                        Res.string.collections_import_error_source_blank_fields,
-                                        si + 1,
-                                        f.title,
-                                    )
-                                },
+                                error = syncString(
+                                    Res.string.collections_import_error_source_blank_fields,
+                                    si + 1,
+                                    f.title,
+                                ),
                             )
                         }
                     }
@@ -229,9 +216,7 @@ object CollectionRepository {
         } catch (e: Exception) {
             ValidationResult(
                 valid = false,
-                error = runBlocking {
-                    getString(Res.string.collections_import_error_invalid_json, e.message.orEmpty())
-                },
+                error = syncString(Res.string.collections_import_error_invalid_json, e.message.orEmpty()),
             )
         }
     }

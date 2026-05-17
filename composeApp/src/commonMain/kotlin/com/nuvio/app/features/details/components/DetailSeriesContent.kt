@@ -76,9 +76,8 @@ import com.nuvio.app.features.details.seasonSortKey
 import com.nuvio.app.features.watchprogress.WatchProgressEntry
 import com.nuvio.app.features.watchprogress.buildPlaybackVideoId
 import com.nuvio.app.features.watching.application.WatchingState
-import kotlinx.coroutines.runBlocking
+import com.nuvio.app.core.i18n.syncString
 import nuvio.composeapp.generated.resources.*
-import org.jetbrains.compose.resources.getString
 import org.jetbrains.compose.resources.painterResource
 import org.jetbrains.compose.resources.stringResource
 import kotlin.math.absoluteValue
@@ -1308,16 +1307,16 @@ private fun seriesContentSizing(maxWidthDp: Float): SeriesContentSizing =
 
 private fun Int.label(): String =
     if (this <= 0) {
-        runBlocking { getString(Res.string.episodes_specials) }
+        syncString(Res.string.episodes_specials)
     } else {
-        runBlocking { getString(Res.string.episodes_season, this@label) }
+        syncString(Res.string.episodes_season, this@label)
     }
 
 private fun MetaVideo.episodeBadge(): String =
     when {
         episode != null || season != null ->
             localizedSeasonEpisodeCode(seasonNumber = season, episodeNumber = episode).orEmpty()
-        else -> runBlocking { getString(Res.string.details_episode_badge_file) }
+        else -> syncString(Res.string.details_episode_badge_file)
     }
 
 private fun MetaVideo.seasonEpisodeKey(): Pair<Int, Int>? {

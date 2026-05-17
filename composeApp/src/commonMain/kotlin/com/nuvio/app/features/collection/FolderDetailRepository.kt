@@ -8,6 +8,7 @@ import com.nuvio.app.features.catalog.fetchCatalogPage
 import com.nuvio.app.features.catalog.mergeCatalogItems
 import com.nuvio.app.features.catalog.supportsPagination
 import com.nuvio.app.core.i18n.localizedMediaTypeLabel
+import com.nuvio.app.core.i18n.syncString
 import com.nuvio.app.features.home.HomeCatalogSettingsRepository
 import com.nuvio.app.features.home.HomeCatalogSection
 import com.nuvio.app.features.home.MetaPreview
@@ -23,11 +24,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.collections_folder_addon_not_found
 import nuvio.composeapp.generated.resources.collections_tab_all
-import org.jetbrains.compose.resources.getString
 
 data class FolderTab(
     val label: String,
@@ -128,7 +127,7 @@ object FolderDetailRepository {
             if (showAll) {
                 add(
                     FolderTab(
-                        label = runBlocking { getString(Res.string.collections_tab_all) },
+                        label = syncString(Res.string.collections_tab_all),
                         isAllTab = true,
                         isLoading = true,
                     ),
@@ -216,9 +215,10 @@ object FolderDetailRepository {
                 updateTab(tabIndex) {
                     it.copy(
                         isLoading = false,
-                        error = runBlocking {
-                            getString(Res.string.collections_folder_addon_not_found, catalogSource?.addonId.orEmpty())
-                        },
+                        error = syncString(
+                            Res.string.collections_folder_addon_not_found,
+                            catalogSource?.addonId.orEmpty(),
+                        ),
                     )
                 }
                 return@forEachIndexed

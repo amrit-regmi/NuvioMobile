@@ -1,6 +1,6 @@
 package com.nuvio.app.features.notifications
 
-import kotlinx.coroutines.runBlocking
+import com.nuvio.app.core.i18n.syncString
 import kotlinx.serialization.Serializable
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.compose_player_episode_code_episode_only
@@ -9,7 +9,6 @@ import nuvio.composeapp.generated.resources.notifications_episode_release_body_c
 import nuvio.composeapp.generated.resources.notifications_episode_release_body_code_title
 import nuvio.composeapp.generated.resources.notifications_episode_release_body_generic
 import nuvio.composeapp.generated.resources.notifications_episode_release_body_title
-import org.jetbrains.compose.resources.getString
 import kotlin.math.abs
 
 data class EpisodeReleaseNotificationsUiState(
@@ -85,24 +84,24 @@ internal fun buildEpisodeReleaseNotificationBody(
     seasonNumber: Int?,
     episodeNumber: Int?,
     episodeTitle: String?,
-): String = runBlocking {
+): String {
     val code = when {
         seasonNumber != null && episodeNumber != null ->
-            getString(Res.string.compose_player_episode_code_full, seasonNumber, episodeNumber)
+            syncString(Res.string.compose_player_episode_code_full, seasonNumber, episodeNumber)
         episodeNumber != null ->
-            getString(Res.string.compose_player_episode_code_episode_only, episodeNumber)
+            syncString(Res.string.compose_player_episode_code_episode_only, episodeNumber)
         else -> ""
     }
     val title = episodeTitle?.trim().takeUnless { it.isNullOrBlank() }
 
-    when {
+    return when {
         code.isNotBlank() && title != null ->
-            getString(Res.string.notifications_episode_release_body_code_title, code, title)
+            syncString(Res.string.notifications_episode_release_body_code_title, code, title)
         code.isNotBlank() ->
-            getString(Res.string.notifications_episode_release_body_code, code)
+            syncString(Res.string.notifications_episode_release_body_code, code)
         title != null ->
-            getString(Res.string.notifications_episode_release_body_title, title)
+            syncString(Res.string.notifications_episode_release_body_title, title)
         else ->
-            getString(Res.string.notifications_episode_release_body_generic)
+            syncString(Res.string.notifications_episode_release_body_generic)
     }
 }

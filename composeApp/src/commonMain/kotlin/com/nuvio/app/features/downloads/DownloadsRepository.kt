@@ -1,7 +1,7 @@
 package com.nuvio.app.features.downloads
 
+import com.nuvio.app.core.i18n.syncString
 import com.nuvio.app.features.streams.StreamItem
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -11,7 +11,6 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import nuvio.composeapp.generated.resources.*
-import org.jetbrains.compose.resources.getString
 
 object DownloadsRepository {
     private val _uiState = MutableStateFlow(DownloadsUiState())
@@ -337,7 +336,7 @@ object DownloadsRepository {
                     } else {
                         current.copy(
                             status = DownloadStatus.Failed,
-                            errorMessage = message.ifBlank { runBlocking { getString(Res.string.download_failed) } },
+                            errorMessage = message.ifBlank { syncString(Res.string.download_failed) },
                             updatedAtEpochMs = DownloadsClock.nowEpochMs(),
                         )
                     }

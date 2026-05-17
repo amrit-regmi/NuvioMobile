@@ -1,8 +1,7 @@
 package com.nuvio.app.features.streams
 
-import kotlinx.coroutines.runBlocking
+import com.nuvio.app.core.i18n.syncString
 import nuvio.composeapp.generated.resources.*
-import org.jetbrains.compose.resources.getString
 
 data class StreamItem(
     val name: String? = null,
@@ -20,7 +19,7 @@ data class StreamItem(
     val clientResolve: StreamClientResolve? = null,
 ) {
     val streamLabel: String
-        get() = name ?: runBlocking { getString(Res.string.stream_default_name) }
+        get() = name ?: syncString(Res.string.stream_default_name)
 
     val streamSubtitle: String?
         get() = description

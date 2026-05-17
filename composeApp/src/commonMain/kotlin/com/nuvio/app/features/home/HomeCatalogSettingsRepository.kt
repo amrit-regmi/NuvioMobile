@@ -1,9 +1,9 @@
 package com.nuvio.app.features.home
 
+import com.nuvio.app.core.i18n.syncString
 import com.nuvio.app.features.addons.ManagedAddon
 import com.nuvio.app.features.collection.Collection
 import com.nuvio.app.features.collection.CollectionRepository
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -12,7 +12,6 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import nuvio.composeapp.generated.resources.*
-import org.jetbrains.compose.resources.getString
 
 data class HomeCatalogSettingsItem(
     val key: String,
@@ -536,7 +535,7 @@ internal fun buildCollectionDefinitions(collections: List<Collection>): List<Col
             key = "collection_${collection.id}",
             collectionId = collection.id,
             title = collection.title,
-            subtitle = runBlocking { getString(Res.string.collections_folder_count, collection.folders.size) },
+            subtitle = syncString(Res.string.collections_folder_count, collection.folders.size),
             isPinnedToTop = collection.pinToTop,
         )
     }

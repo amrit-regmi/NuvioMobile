@@ -4,6 +4,7 @@ import co.touchlab.kermit.Logger
 import com.nuvio.app.core.auth.AuthRepository
 import com.nuvio.app.core.auth.AuthState
 import com.nuvio.app.core.auth.isAnonymous
+import com.nuvio.app.core.i18n.syncString
 import com.nuvio.app.core.network.SupabaseProvider
 import com.nuvio.app.features.addons.AddonRepository
 import com.nuvio.app.features.collection.CollectionMobileSettingsRepository
@@ -35,7 +36,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -45,7 +45,6 @@ import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.put
 import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.StringResource
-import org.jetbrains.compose.resources.getString
 
 @Serializable
 private data class StoredProfilePayload(
@@ -58,7 +57,7 @@ object ProfileRepository {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val log = Logger.withTag("ProfileRepository")
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
-    private fun localizedString(resource: StringResource): String = runBlocking { getString(resource) }
+    private fun localizedString(resource: StringResource): String = syncString(resource)
 
     private val _state = MutableStateFlow(ProfileState())
     val state: StateFlow<ProfileState> = _state.asStateFlow()
@@ -290,7 +289,7 @@ object ProfileRepository {
 
     suspend fun setPin(profileIndex: Int, pin: String, currentPin: String? = null): PinVerifyResult {
         if (AuthRepository.state.value !is AuthState.Authenticated) {
-            return PinVerifyResult(unlocked = false, message = getString(Res.string.profile_pin_set_requires_internet))
+            return PinVerifyResult(unlocked = false, message = syncString(Res.string.profile_pin_set_requires_internet))
         }
 
         return runCatching {
@@ -306,13 +305,13 @@ object ProfileRepository {
         }.onFailure { e ->
             log.e(e) { "Failed to set pin" }
         }.getOrElse {
-            PinVerifyResult(unlocked = false, message = getString(Res.string.profile_pin_set_failed))
+            PinVerifyResult(unlocked = false, message = syncString(Res.string.profile_pin_set_failed))
         }
     }
 
     suspend fun clearPin(profileIndex: Int, currentPin: String? = null): PinVerifyResult {
         if (AuthRepository.state.value !is AuthState.Authenticated) {
-            return PinVerifyResult(unlocked = false, message = getString(Res.string.profile_pin_clear_requires_internet))
+            return PinVerifyResult(unlocked = false, message = syncString(Res.string.profile_pin_clear_requires_internet))
         }
 
         return runCatching {
@@ -327,7 +326,7 @@ object ProfileRepository {
         }.onFailure { e ->
             log.e(e) { "Failed to clear pin" }
         }.getOrElse {
-            PinVerifyResult(unlocked = false, message = getString(Res.string.profile_pin_clear_failed))
+            PinVerifyResult(unlocked = false, message = syncString(Res.string.profile_pin_clear_failed))
         }
     }
 

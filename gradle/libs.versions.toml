@@ -16,7 +16,7 @@ composeMultiplatform = "1.11.0-beta03"
 coil = "3.5.0-beta01"
 kermit = "2.0.5"
 junit = "4.13.2"
-kotlin = "2.3.0"
+kotlin = "2.3.21"
 kotlinx-serialization = "1.8.1"
 ktor = "3.4.1"
 material3 = "1.11.0-alpha07"
@@ -54,6 +54,7 @@ coil-network-ktor3 = { module = "io.coil-kt.coil3:coil-network-ktor3", version.r
 coil-svg = { module = "io.coil-kt.coil3:coil-svg", version.ref = "coil" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
 ktor-client-android = { module = "io.ktor:ktor-client-android", version.ref = "ktor" }
+ktor-client-js = { module = "io.ktor:ktor-client-js", version.ref = "ktor" }
 kermit = { module = "co.touchlab:kermit", version.ref = "kermit" }
 ktor-client-darwin = { module = "io.ktor:ktor-client-darwin", version.ref = "ktor" }
 androidx-media3-exoplayer = { module = "androidx.media3:media3-exoplayer", version.ref = "androidx-media3" }

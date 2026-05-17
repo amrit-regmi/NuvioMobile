@@ -1,9 +1,8 @@
 package com.nuvio.app.features.addons
 
-import kotlinx.coroutines.runBlocking
+import com.nuvio.app.core.i18n.syncString
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.generic_addon
-import org.jetbrains.compose.resources.getString
 
 data class AddonManifest(
     val id: String,
@@ -60,7 +59,7 @@ data class ManagedAddon(
         get() = userSetName?.takeIf { it.isNotBlank() && it != manifest?.name }
             ?: manifest?.name
             ?: manifestUrl.substringBefore("?").substringAfterLast("/").ifBlank {
-                runBlocking { getString(Res.string.generic_addon) }
+                syncString(Res.string.generic_addon)
             }
 }
 

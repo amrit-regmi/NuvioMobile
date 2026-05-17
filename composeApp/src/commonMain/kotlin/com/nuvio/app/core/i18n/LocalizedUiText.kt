@@ -1,6 +1,5 @@
 package com.nuvio.app.core.i18n
 
-import kotlinx.coroutines.runBlocking
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.action_play
 import nuvio.composeapp.generated.resources.action_play_episode
@@ -44,107 +43,100 @@ import nuvio.composeapp.generated.resources.unit_bytes_b
 import nuvio.composeapp.generated.resources.unit_bytes_gb
 import nuvio.composeapp.generated.resources.unit_bytes_kb
 import nuvio.composeapp.generated.resources.unit_bytes_mb
-import org.jetbrains.compose.resources.getString
+import org.jetbrains.compose.resources.StringResource
 
 fun localizedMediaTypeLabel(type: String): String {
     val fallback = type.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
     return when (type.trim().lowercase()) {
-        "movie" -> resourceString("Movies") { getString(Res.string.media_movies) }
-        "series" -> resourceString("Series") { getString(Res.string.media_series) }
-        "anime" -> resourceString("Anime") { getString(Res.string.media_anime) }
-        "channel" -> resourceString("Channels") { getString(Res.string.media_channels) }
-        "tv" -> resourceString("TV") { getString(Res.string.media_tv) }
+        "movie" -> resourceString(Res.string.media_movies, "Movies")
+        "series" -> resourceString(Res.string.media_series, "Series")
+        "anime" -> resourceString(Res.string.media_anime, "Anime")
+        "channel" -> resourceString(Res.string.media_channels, "Channels")
+        "tv" -> resourceString(Res.string.media_tv, "TV")
         else -> fallback
     }
 }
 
-fun localizedMovieTypeLabel(): String = resourceString("Movie") { getString(Res.string.media_movie) }
+fun localizedMovieTypeLabel(): String = resourceString(Res.string.media_movie, "Movie")
 
 fun localizedSeasonEpisodeCode(seasonNumber: Int?, episodeNumber: Int?): String? =
     when {
         seasonNumber != null && episodeNumber != null ->
-            resourceString("S${seasonNumber}E${episodeNumber}") {
-                getString(Res.string.compose_player_episode_code_full, seasonNumber, episodeNumber)
-            }
+            resourceString(Res.string.compose_player_episode_code_full, "S${seasonNumber}E${episodeNumber}", seasonNumber, episodeNumber)
         episodeNumber != null ->
-            resourceString("E${episodeNumber}") {
-                getString(Res.string.compose_player_episode_code_episode_only, episodeNumber)
-            }
+            resourceString(Res.string.compose_player_episode_code_episode_only, "E${episodeNumber}", episodeNumber)
         else -> null
     }
 
 fun localizedPlayLabel(seasonNumber: Int?, episodeNumber: Int?): String {
     val episodeCode = localizedSeasonEpisodeCode(seasonNumber, episodeNumber)
     return if (episodeCode != null) {
-        resourceString("Play $episodeCode") { getString(Res.string.action_play_episode, episodeCode) }
+        resourceString(Res.string.action_play_episode, "Play $episodeCode", episodeCode)
     } else {
-        resourceString("Play") { getString(Res.string.action_play) }
+        resourceString(Res.string.action_play, "Play")
     }
 }
 
 fun localizedResumeLabel(seasonNumber: Int?, episodeNumber: Int?): String {
     val episodeCode = localizedSeasonEpisodeCode(seasonNumber, episodeNumber)
     return if (episodeCode != null) {
-        resourceString("Resume $episodeCode") { getString(Res.string.action_resume_episode, episodeCode) }
+        resourceString(Res.string.action_resume_episode, "Resume $episodeCode", episodeCode)
     } else {
-        resourceString("Resume") { getString(Res.string.action_resume) }
+        resourceString(Res.string.action_resume, "Resume")
     }
 }
 
 fun localizedUpNextLabel(seasonNumber: Int?, episodeNumber: Int?): String =
     if (seasonNumber != null && episodeNumber != null) {
-        resourceString("Up Next • S${seasonNumber}E${episodeNumber}") {
-            getString(Res.string.continue_watching_up_next_episode, seasonNumber, episodeNumber)
-        }
+        resourceString(Res.string.continue_watching_up_next_episode, "Up Next • S${seasonNumber}E${episodeNumber}", seasonNumber, episodeNumber)
     } else {
-        resourceString("Up Next") { getString(Res.string.continue_watching_up_next) }
+        resourceString(Res.string.continue_watching_up_next, "Up Next")
     }
 
 fun localizedMonthName(month: Int): String =
     when (month) {
-        1 -> resourceString("January") { getString(Res.string.date_month_january) }
-        2 -> resourceString("February") { getString(Res.string.date_month_february) }
-        3 -> resourceString("March") { getString(Res.string.date_month_march) }
-        4 -> resourceString("April") { getString(Res.string.date_month_april) }
-        5 -> resourceString("May") { getString(Res.string.date_month_may) }
-        6 -> resourceString("June") { getString(Res.string.date_month_june) }
-        7 -> resourceString("July") { getString(Res.string.date_month_july) }
-        8 -> resourceString("August") { getString(Res.string.date_month_august) }
-        9 -> resourceString("September") { getString(Res.string.date_month_september) }
-        10 -> resourceString("October") { getString(Res.string.date_month_october) }
-        11 -> resourceString("November") { getString(Res.string.date_month_november) }
-        12 -> resourceString("December") { getString(Res.string.date_month_december) }
+        1 -> resourceString(Res.string.date_month_january, "January")
+        2 -> resourceString(Res.string.date_month_february, "February")
+        3 -> resourceString(Res.string.date_month_march, "March")
+        4 -> resourceString(Res.string.date_month_april, "April")
+        5 -> resourceString(Res.string.date_month_may, "May")
+        6 -> resourceString(Res.string.date_month_june, "June")
+        7 -> resourceString(Res.string.date_month_july, "July")
+        8 -> resourceString(Res.string.date_month_august, "August")
+        9 -> resourceString(Res.string.date_month_september, "September")
+        10 -> resourceString(Res.string.date_month_october, "October")
+        11 -> resourceString(Res.string.date_month_november, "November")
+        12 -> resourceString(Res.string.date_month_december, "December")
         else -> month.toString()
     }
 
 fun localizedShortMonthName(month: Int): String =
     when (month) {
-        1 -> resourceString("Jan") { getString(Res.string.date_month_short_jan) }
-        2 -> resourceString("Feb") { getString(Res.string.date_month_short_feb) }
-        3 -> resourceString("Mar") { getString(Res.string.date_month_short_mar) }
-        4 -> resourceString("Apr") { getString(Res.string.date_month_short_apr) }
-        5 -> resourceString("May") { getString(Res.string.date_month_short_may) }
-        6 -> resourceString("Jun") { getString(Res.string.date_month_short_jun) }
-        7 -> resourceString("Jul") { getString(Res.string.date_month_short_jul) }
-        8 -> resourceString("Aug") { getString(Res.string.date_month_short_aug) }
-        9 -> resourceString("Sep") { getString(Res.string.date_month_short_sep) }
-        10 -> resourceString("Oct") { getString(Res.string.date_month_short_oct) }
-        11 -> resourceString("Nov") { getString(Res.string.date_month_short_nov) }
-        12 -> resourceString("Dec") { getString(Res.string.date_month_short_dec) }
+        1 -> resourceString(Res.string.date_month_short_jan, "Jan")
+        2 -> resourceString(Res.string.date_month_short_feb, "Feb")
+        3 -> resourceString(Res.string.date_month_short_mar, "Mar")
+        4 -> resourceString(Res.string.date_month_short_apr, "Apr")
+        5 -> resourceString(Res.string.date_month_short_may, "May")
+        6 -> resourceString(Res.string.date_month_short_jun, "Jun")
+        7 -> resourceString(Res.string.date_month_short_jul, "Jul")
+        8 -> resourceString(Res.string.date_month_short_aug, "Aug")
+        9 -> resourceString(Res.string.date_month_short_sep, "Sep")
+        10 -> resourceString(Res.string.date_month_short_oct, "Oct")
+        11 -> resourceString(Res.string.date_month_short_nov, "Nov")
+        12 -> resourceString(Res.string.date_month_short_dec, "Dec")
         else -> month.toString()
     }
 
 fun localizedByteUnit(unit: String): String =
     when (unit) {
-        "GB" -> resourceString("GB") { getString(Res.string.unit_bytes_gb) }
-        "MB" -> resourceString("MB") { getString(Res.string.unit_bytes_mb) }
-        "KB" -> resourceString("KB") { getString(Res.string.unit_bytes_kb) }
-        else -> resourceString("B") { getString(Res.string.unit_bytes_b) }
+        "GB" -> resourceString(Res.string.unit_bytes_gb, "GB")
+        "MB" -> resourceString(Res.string.unit_bytes_mb, "MB")
+        "KB" -> resourceString(Res.string.unit_bytes_kb, "KB")
+        else -> resourceString(Res.string.unit_bytes_b, "B")
     }
 
 private fun resourceString(
+    resource: StringResource,
     fallback: String,
-    provider: suspend () -> String,
-): String = runCatching {
-    runBlocking { provider() }
-}.getOrDefault(fallback)
+    vararg args: Any,
+): String = syncStringOrFallback(resource, fallback, *args)

@@ -3,7 +3,7 @@ package com.nuvio.app.features.details
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.runBlocking
+import com.nuvio.app.core.i18n.syncString
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
@@ -11,7 +11,6 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.StringResource
-import org.jetbrains.compose.resources.getString
 
 enum class MetaScreenSectionKey {
     ACTIONS,
@@ -160,7 +159,7 @@ object MetaScreenSettingsRepository {
     private var tabLayout: Boolean = false
     private var episodeCardStyle: MetaEpisodeCardStyle = MetaEpisodeCardStyle.Horizontal
     private var blurUnwatchedEpisodes: Boolean = false
-    private fun localizedString(resource: StringResource): String = runBlocking { getString(resource) }
+    private fun localizedString(resource: StringResource): String = syncString(resource)
 
     fun ensureLoaded() {
         if (hasLoaded) return

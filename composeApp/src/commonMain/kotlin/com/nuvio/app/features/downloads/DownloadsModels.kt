@@ -1,13 +1,12 @@
 package com.nuvio.app.features.downloads
 
 import kotlinx.serialization.Serializable
-import kotlinx.coroutines.runBlocking
+import com.nuvio.app.core.i18n.syncString
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.downloads_enqueue_missing_url
 import nuvio.composeapp.generated.resources.downloads_enqueue_replaced
 import nuvio.composeapp.generated.resources.downloads_enqueue_started
 import nuvio.composeapp.generated.resources.downloads_enqueue_unsupported_format
-import org.jetbrains.compose.resources.getString
 
 @Serializable
 enum class DownloadStatus {
@@ -89,14 +88,13 @@ enum class DownloadEnqueueResult {
     MissingUrl,
     UnsupportedFormat;
 
-    fun toastMessage(): String = runBlocking {
-        when (this@DownloadEnqueueResult) {
-            Started -> getString(Res.string.downloads_enqueue_started)
-            Replaced -> getString(Res.string.downloads_enqueue_replaced)
-            MissingUrl -> getString(Res.string.downloads_enqueue_missing_url)
-            UnsupportedFormat -> getString(Res.string.downloads_enqueue_unsupported_format)
+    fun toastMessage(): String =
+        when (this) {
+            Started -> syncString(Res.string.downloads_enqueue_started)
+            Replaced -> syncString(Res.string.downloads_enqueue_replaced)
+            MissingUrl -> syncString(Res.string.downloads_enqueue_missing_url)
+            UnsupportedFormat -> syncString(Res.string.downloads_enqueue_unsupported_format)
         }
-    }
 }
 
 internal fun List<DownloadItem>.sortedForSeriesDownloads(): List<DownloadItem> =

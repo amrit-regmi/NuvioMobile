@@ -1,5 +1,6 @@
 package com.nuvio.app.features.debrid
 
+import com.nuvio.app.core.i18n.syncString
 import com.nuvio.app.features.streams.StreamBehaviorHints
 import com.nuvio.app.features.streams.StreamClientResolve
 import com.nuvio.app.features.streams.StreamItem
@@ -11,14 +12,12 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.debrid_missing_api_key
 import nuvio.composeapp.generated.resources.debrid_resolve_failed
 import nuvio.composeapp.generated.resources.debrid_stream_stale
-import org.jetbrains.compose.resources.getString
 
 object DirectDebridPlaybackResolver {
     private val torboxResolver = TorboxDirectDebridResolver()
@@ -157,9 +156,9 @@ sealed class DirectDebridResolveResult {
 fun DirectDebridPlayableResult.toastMessage(): String? =
     when (this) {
         is DirectDebridPlayableResult.Success -> null
-        DirectDebridPlayableResult.MissingApiKey -> runBlocking { getString(Res.string.debrid_missing_api_key) }
-        DirectDebridPlayableResult.Stale -> runBlocking { getString(Res.string.debrid_stream_stale) }
-        DirectDebridPlayableResult.Error -> runBlocking { getString(Res.string.debrid_resolve_failed) }
+        DirectDebridPlayableResult.MissingApiKey -> syncString(Res.string.debrid_missing_api_key)
+        DirectDebridPlayableResult.Stale -> syncString(Res.string.debrid_stream_stale)
+        DirectDebridPlayableResult.Error -> syncString(Res.string.debrid_resolve_failed)
     }
 
 private class TorboxDirectDebridResolver(

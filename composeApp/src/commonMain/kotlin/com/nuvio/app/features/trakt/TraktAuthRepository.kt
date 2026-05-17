@@ -3,6 +3,7 @@ package com.nuvio.app.features.trakt
 import co.touchlab.kermit.Logger
 import com.nuvio.app.features.addons.httpGetTextWithHeaders
 import com.nuvio.app.features.addons.httpPostJsonWithHeaders
+import com.nuvio.app.core.i18n.syncString
 import io.ktor.http.Url
 import io.ktor.http.encodeURLParameter
 import kotlinx.coroutines.CancellationException
@@ -20,9 +21,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlin.random.Random
 import nuvio.composeapp.generated.resources.*
-import org.jetbrains.compose.resources.getString
 import org.jetbrains.compose.resources.StringResource
-import kotlinx.coroutines.runBlocking
 
 object TraktAuthRepository {
     private const val BASE_URL = "https://api.trakt.tv"
@@ -494,4 +493,4 @@ private data class TraktUserDto(
 private data class TraktUserIdsDto(
     val slug: String? = null,
 )
-    private fun localizedString(resource: StringResource): String = runBlocking { getString(resource) }
+    private fun localizedString(resource: StringResource): String = syncString(resource)
