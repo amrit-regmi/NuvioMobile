@@ -357,11 +357,7 @@ bool MpvRenderWidget::ensureMpv()
     mpv_set_option_string(m_mpv, "terminal", "no");
     mpv_set_option_string(m_mpv, "msg-level", "all=warn");
     mpv_set_option_string(m_mpv, "vo", "libmpv");
-#if defined(Q_OS_MACOS)
-    mpv_set_option_string(m_mpv, "hwdec", "auto-copy-safe");
-#else
-    mpv_set_option_string(m_mpv, "hwdec", "auto-safe");
-#endif
+    mpv_set_option_string(m_mpv, "hwdec", "auto");
     mpv_set_option_string(m_mpv, "gpu-api", "opengl");
     mpv_set_option_string(m_mpv, "idle", "yes");
     mpv_set_option_string(m_mpv, "keep-open", "no");
