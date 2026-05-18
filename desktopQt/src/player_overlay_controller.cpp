@@ -1,10 +1,8 @@
 #include "player_overlay_controller.h"
 
-#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QUrl>
 #include <QtMath>
 
 #include <cmath>
@@ -15,16 +13,6 @@ constexpr int kAutoHideDelayMs = 3600;
 constexpr int kGestureFeedbackDelayMs = 900;
 constexpr int kDoubleTapSeekResetDelayMs = 650;
 constexpr qint64 kDoubleTapSeekStepMs = 10000;
-
-QString displayNameFromUrl(const QString &rawUrl)
-{
-    const QUrl url(rawUrl);
-    const auto path = url.isValid() ? url.path() : rawUrl;
-    auto name = QFileInfo(path).completeBaseName();
-    if (name.isEmpty()) name = QFileInfo(path).fileName();
-    if (name.isEmpty()) name = QStringLiteral("Now playing");
-    return QUrl::fromPercentEncoding(name.toUtf8()).replace('.', ' ').replace('_', ' ');
-}
 
 QString normalizeColor(const QString &color)
 {
@@ -301,11 +289,6 @@ void PlayerOverlayController::setPlayerError(const QString &message)
     setControlsVisible(false);
     emitPlayerErrorChangedIfNeeded(previousErrorMessage);
     emit playbackChanged();
-}
-
-void PlayerOverlayController::setFallbackTitleFromUrl(const QString &url)
-{
-    setTitle(displayNameFromUrl(url));
 }
 
 void PlayerOverlayController::resetForPlayback()

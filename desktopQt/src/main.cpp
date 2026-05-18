@@ -365,7 +365,6 @@ int main(int argc, char *argv[])
         &window,
         [stack, ensurePlayerContainer, &playerWindow, &playerOverlayController](const QString &url, const QString &headersJson, qint64 startPositionMs) {
             auto *container = ensurePlayerContainer();
-            playerOverlayController.setFallbackTitleFromUrl(url);
             playerOverlayController.resetForPlayback();
             stack->setCurrentWidget(container);
             container->setFocus();

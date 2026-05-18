@@ -162,7 +162,6 @@ public slots:
     void setTracks(const QVariantList &audioTracks, const QVariantList &subtitleTracks, int selectedAudioIndex, int selectedSubtitleIndex);
     void setPlayerContextJson(const QString &contextJson);
     void setPlayerError(const QString &message);
-    void setFallbackTitleFromUrl(const QString &url);
     void resetForPlayback();
 
     Q_INVOKABLE void revealControls();
