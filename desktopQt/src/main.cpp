@@ -199,8 +199,9 @@ void configureProfile(QWebEngineProfile *profile)
     if (dataRoot.isEmpty()) return;
 
     QDir().mkpath(dataRoot);
-    profile->setPersistentStoragePath(QDir(dataRoot).filePath("webengine-storage"));
-    profile->setCachePath(QDir(dataRoot).filePath("webengine-cache"));
+    const QDir dataDir(dataRoot);
+    profile->setPersistentStoragePath(dataDir.filePath("qt-web-profile/storage"));
+    profile->setCachePath(dataDir.filePath("qt-web-profile/cache"));
     profile->setHttpCacheType(QWebEngineProfile::DiskHttpCache);
     profile->setPersistentCookiesPolicy(QWebEngineProfile::ForcePersistentCookies);
 }
@@ -227,7 +228,7 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    auto *profile = QWebEngineProfile::defaultProfile();
+    auto *profile = new QWebEngineProfile(QStringLiteral("NuvioQt"), &app);
     configureProfile(profile);
     profile->installUrlSchemeHandler(QByteArray(kScheme), new LocalWebSchemeHandler(webRoot, profile));
 
@@ -240,6 +241,7 @@ int main(int argc, char *argv[])
 
     auto *stack = new QStackedWidget(&window);
     auto *webView = new QWebEngineView(stack);
+    webView->setPage(new QWebEnginePage(profile, webView));
     stack->addWidget(webView);
     stack->setCurrentWidget(webView);
     window.setCentralWidget(stack);
@@ -363,10 +365,10 @@ int main(int argc, char *argv[])
         &window,
         [stack, ensurePlayerContainer, &playerWindow, &playerOverlayController](const QString &url, const QString &headersJson, qint64 startPositionMs) {
             auto *container = ensurePlayerContainer();
-            stack->setCurrentWidget(container);
-            container->setFocus();
             playerOverlayController.setFallbackTitleFromUrl(url);
             playerOverlayController.resetForPlayback();
+            stack->setCurrentWidget(container);
+            container->setFocus();
             if (playerWindow) playerWindow->playUrl(url, headersJson, startPositionMs);
         }
     );
