@@ -860,8 +860,6 @@ Item {
             onClicked: button.triggered()
         }
 
-        ToolTip.visible: mouse.containsMouse
-        ToolTip.text: button.label
     }
 
     component CenterButton: Rectangle {
@@ -899,8 +897,6 @@ Item {
             onClicked: button.triggered()
         }
 
-        ToolTip.visible: mouse.containsMouse
-        ToolTip.text: button.label
     }
 
     component PillButton: Rectangle {
