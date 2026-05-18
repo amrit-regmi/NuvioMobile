@@ -58,13 +58,16 @@ import com.nuvio.app.features.player.skip.SkipIntroRepository
 import com.nuvio.app.features.player.skip.SkipInterval
 import com.nuvio.app.features.streams.StreamAutoPlayMode
 import com.nuvio.app.features.streams.StreamAutoPlaySelector
+import com.nuvio.app.features.streams.AddonStreamGroup
 import com.nuvio.app.features.streams.StreamItem
 import com.nuvio.app.features.streams.StreamLinkCacheRepository
 import com.nuvio.app.features.streams.StreamsUiState
 import com.nuvio.app.features.tmdb.TmdbService
 import com.nuvio.app.features.trakt.TraktScrobbleRepository
+import com.nuvio.app.features.watching.application.WatchingState
 import com.nuvio.app.features.watched.WatchedRepository
 import com.nuvio.app.features.watchprogress.WatchProgressClock
+import com.nuvio.app.features.watchprogress.WatchProgressEntry
 import com.nuvio.app.features.watchprogress.WatchProgressPlaybackSession
 import com.nuvio.app.features.watchprogress.WatchProgressRepository
 import com.nuvio.app.features.watchprogress.buildPlaybackVideoId
@@ -160,10 +163,11 @@ fun PlayerScreen(
         WatchedRepository.ensureLoaded()
         WatchedRepository.uiState
     }.collectAsStateWithLifecycle()
-    val watchProgressUiState by remember {
-        WatchProgressRepository.ensureLoaded()
-        WatchProgressRepository.uiState
-    }.collectAsStateWithLifecycle()
+        val watchProgressUiState by remember {
+            WatchProgressRepository.ensureLoaded()
+            WatchProgressRepository.uiState
+        }.collectAsStateWithLifecycle()
+        val qtNativePlayerHost = remember { QtNativePlayerBridge.isAvailable() }
 
     BoxWithConstraints(
         modifier = modifier
@@ -279,6 +283,7 @@ fun PlayerScreen(
         var submitIntroSegmentType by rememberSaveable { mutableStateOf("intro") }
         var submitIntroStartTimeStr by rememberSaveable { mutableStateOf("00:00") }
         var submitIntroEndTimeStr by rememberSaveable { mutableStateOf("00:00") }
+        var submitIntroSubmitting by remember { mutableStateOf(false) }
         var episodeStreamsPanelState by remember { mutableStateOf(EpisodeStreamsPanelState()) }
         val sourceStreamsState by PlayerStreamsRepository.sourceState.collectAsStateWithLifecycle()
         val episodeStreamsRepoState by PlayerStreamsRepository.episodeStreamsState.collectAsStateWithLifecycle()
@@ -611,6 +616,7 @@ fun PlayerScreen(
             showSubtitleModal = false
             showSourcesPanel = false
             showEpisodesPanel = false
+            showSubmitIntroModal = false
             episodeStreamsPanelState = EpisodeStreamsPanelState()
             PlayerStreamsRepository.clearEpisodeStreams()
         }
@@ -1193,6 +1199,40 @@ fun PlayerScreen(
             }
         }
 
+        fun resolveSubmitIntroImdbId(): String? =
+            activeVideoId?.split(":")?.firstOrNull()?.takeIf { it.startsWith("tt") }
+                ?: parentMetaId.takeIf { it.startsWith("tt") }
+                ?: metaUiState.meta?.id?.takeIf { it.startsWith("tt") }
+
+        fun submitIntroTimestamps() {
+            if (submitIntroSubmitting) return
+            val imdbId = resolveSubmitIntroImdbId() ?: return
+            val season = activeSeasonNumber ?: return
+            val episode = activeEpisodeNumber ?: return
+            val start = submitIntroStartTimeStr.toQtNativeSubmitSecondsOrNull() ?: return
+            val end = submitIntroEndTimeStr.toQtNativeSubmitSecondsOrNull() ?: return
+            if (end <= start) return
+
+            submitIntroSubmitting = true
+            scope.launch {
+                val result = SkipIntroRepository.submitIntro(
+                    imdbId = imdbId,
+                    season = season,
+                    episode = episode,
+                    startSec = start,
+                    endSec = end,
+                    segmentType = submitIntroSegmentType,
+                )
+                submitIntroSubmitting = false
+                if (result) {
+                    submitIntroStartTimeStr = "00:00"
+                    submitIntroEndTimeStr = "00:00"
+                    submitIntroSegmentType = "intro"
+                    showSubmitIntroModal = false
+                }
+            }
+        }
+
         fun openSourcesPanel() {
             val type = contentType ?: parentMetaType
             val vid = activeVideoId ?: return
@@ -1219,10 +1259,323 @@ fun PlayerScreen(
             controlsVisible = false
         }
 
+        fun reloadActiveSources() {
+            val type = contentType ?: parentMetaType
+            val vid = activeVideoId ?: return
+            PlayerStreamsRepository.loadSources(
+                type = type,
+                videoId = vid,
+                season = activeSeasonNumber,
+                episode = activeEpisodeNumber,
+                forceRefresh = true,
+            )
+        }
+
+        fun selectEpisodeForPlayback(episode: MetaVideo) {
+            val downloadedEpisode = DownloadsRepository.findPlayableDownload(
+                parentMetaId = parentMetaId,
+                seasonNumber = episode.season,
+                episodeNumber = episode.episode,
+                videoId = episode.id,
+            )
+            if (downloadedEpisode != null) {
+                switchToDownloadedEpisode(downloadedEpisode, episode)
+                return
+            }
+
+            val type = contentType ?: parentMetaType
+            PlayerStreamsRepository.loadEpisodeStreams(
+                type = type,
+                videoId = episode.id,
+                season = episode.season,
+                episode = episode.episode,
+            )
+            episodeStreamsPanelState = EpisodeStreamsPanelState(
+                showStreams = true,
+                selectedEpisode = episode,
+            )
+            showEpisodesPanel = true
+            showSourcesPanel = false
+            controlsVisible = false
+        }
+
+        fun reloadSelectedEpisodeStreams() {
+            val episode = episodeStreamsPanelState.selectedEpisode ?: return
+            val type = contentType ?: parentMetaType
+            PlayerStreamsRepository.loadEpisodeStreams(
+                type = type,
+                videoId = episode.id,
+                season = episode.season,
+                episode = episode.episode,
+                forceRefresh = true,
+            )
+        }
+
         fun fetchAddonSubtitlesForActiveItem() {
             val type = activeAddonSubtitleType.takeIf { it.isNotBlank() } ?: return
             val videoId = activeVideoId?.takeIf { it.isNotBlank() } ?: return
             SubtitleRepository.fetchAddonSubtitles(type, videoId)
+        }
+
+        val nativeSources = sourceStreamsState.filteredGroups.flatMap { it.streams }
+        val nativeEpisodeStreams = episodeStreamsRepoState.filteredGroups.flatMap { it.streams }
+        val nativeSourceFilters = remember(sourceStreamsState.groups, sourceStreamsState.selectedFilter) {
+            buildQtNativeFilterRows(
+                groups = sourceStreamsState.groups,
+                selectedFilter = sourceStreamsState.selectedFilter,
+            )
+        }
+        val nativeEpisodeStreamFilters = remember(episodeStreamsRepoState.groups, episodeStreamsRepoState.selectedFilter) {
+            buildQtNativeFilterRows(
+                groups = episodeStreamsRepoState.groups,
+                selectedFilter = episodeStreamsRepoState.selectedFilter,
+            )
+        }
+        val submitIntroImdbId = resolveSubmitIntroImdbId()
+        val submitIntroAvailable = isSeries &&
+            playerSettingsUiState.introSubmitEnabled &&
+            playerSettingsUiState.introDbApiKey.isNotBlank() &&
+            activeSeasonNumber != null &&
+            activeEpisodeNumber != null &&
+            !submitIntroImdbId.isNullOrBlank()
+
+        LaunchedEffect(
+            title,
+            logo,
+            backdropArtwork,
+            errorMessage,
+            pauseDescription,
+            activeStreamTitle,
+            activeStreamSubtitle,
+            activeProviderName,
+            activeVideoId,
+            activeSourceUrl,
+            activeSeasonNumber,
+            activeEpisodeNumber,
+            activeEpisodeTitle,
+            sourceStreamsState,
+            nativeSourceFilters,
+            allEpisodes,
+            episodeStreamsPanelState,
+            episodeStreamsRepoState,
+            nativeEpisodeStreamFilters,
+            addonSubtitles,
+            selectedAddonSubtitleId,
+            isLoadingAddonSubtitles,
+            subtitleStyle,
+            parentalWarnings,
+            showParentalGuide,
+            submitIntroAvailable,
+            showSubmitIntroModal,
+            submitIntroSubmitting,
+            submitIntroSegmentType,
+            submitIntroStartTimeStr,
+            submitIntroEndTimeStr,
+            activeSkipInterval,
+            skipIntervalDismissed,
+            nextEpisodeInfo,
+            showNextEpisodeCard,
+            nextEpisodeAutoPlaySearching,
+            nextEpisodeAutoPlaySourceName,
+            nextEpisodeAutoPlayCountdown,
+            resizeMode,
+            playerSettingsUiState.showLoadingOverlay,
+            playerSettingsUiState.holdToSpeedEnabled,
+            playerSettingsUiState.holdToSpeedValue,
+            watchProgressUiState.byVideoId,
+            watchedUiState.watchedKeys,
+            metaScreenSettingsUiState.blurUnwatchedEpisodes,
+        ) {
+            QtNativePlayerBridge.publishContext(
+                buildQtNativePlayerContextJson(
+                    title = title,
+                    logoUrl = logo.orEmpty(),
+                    artworkUrl = backdropArtwork.orEmpty(),
+                    playerErrorMessage = errorMessage.orEmpty(),
+                    streamTitle = activeStreamTitle,
+                    providerName = activeProviderName,
+                    pauseDescription = pauseDescription ?: activeStreamSubtitle.orEmpty(),
+                    seasonNumber = activeSeasonNumber,
+                    episodeNumber = activeEpisodeNumber,
+                    episodeTitle = activeEpisodeTitle,
+                    sources = nativeSources,
+                    sourceFilters = nativeSourceFilters,
+                    sourcePickerAvailable = activeVideoId != null,
+                    currentSourceUrl = activeSourceUrl,
+                    currentSourceName = activeStreamTitle,
+                    sourcesLoading = sourceStreamsState.isAnyLoading,
+                    episodes = allEpisodes,
+                    episodePickerAvailable = isSeries,
+                    parentMetaType = parentMetaType,
+                    parentMetaId = parentMetaId,
+                    progressByVideoId = watchProgressUiState.byVideoId,
+                    watchedKeys = watchedUiState.watchedKeys,
+                    blurUnwatchedEpisodes = metaScreenSettingsUiState.blurUnwatchedEpisodes,
+                    currentSeason = activeSeasonNumber,
+                    currentEpisode = activeEpisodeNumber,
+                    episodeStreams = nativeEpisodeStreams,
+                    episodeStreamFilters = nativeEpisodeStreamFilters,
+                    episodeStreamsLoading = episodeStreamsRepoState.isAnyLoading,
+                    selectedEpisode = episodeStreamsPanelState.selectedEpisode,
+                    addonSubtitles = addonSubtitles,
+                    selectedAddonSubtitleId = selectedAddonSubtitleId,
+                    addonSubtitlesLoading = isLoadingAddonSubtitles,
+                    subtitleStyle = subtitleStyle,
+                    parentalWarnings = parentalWarnings,
+                    parentalGuideVisible = showParentalGuide,
+                    submitIntroAvailable = submitIntroAvailable,
+                    submitIntroVisible = showSubmitIntroModal,
+                    submitIntroSubmitting = submitIntroSubmitting,
+                    submitIntroSegmentType = submitIntroSegmentType,
+                    submitIntroStartTime = submitIntroStartTimeStr,
+                    submitIntroEndTime = submitIntroEndTimeStr,
+                    activeSkipInterval = activeSkipInterval,
+                    skipIntroDismissed = skipIntervalDismissed,
+                    nextEpisodeInfo = nextEpisodeInfo.takeIf { showNextEpisodeCard },
+                    nextEpisodeAutoPlaySearching = nextEpisodeAutoPlaySearching,
+                    nextEpisodeAutoPlaySourceName = nextEpisodeAutoPlaySourceName.orEmpty(),
+                    nextEpisodeAutoPlayCountdown = nextEpisodeAutoPlayCountdown,
+                    resizeMode = resizeMode,
+                    showLoadingOverlay = playerSettingsUiState.showLoadingOverlay,
+                    holdToSpeedEnabled = playerSettingsUiState.holdToSpeedEnabled,
+                    holdToSpeedValue = playerSettingsUiState.holdToSpeedValue,
+                ),
+            )
+        }
+
+        LaunchedEffect(
+            nativeSources,
+            nativeSourceFilters,
+            allEpisodes,
+            nativeEpisodeStreams,
+            nativeEpisodeStreamFilters,
+            addonSubtitles,
+            episodeStreamsPanelState.selectedEpisode,
+            activeSkipInterval,
+            subtitleStyle,
+            showParentalGuide,
+            submitIntroAvailable,
+            submitIntroSegmentType,
+            submitIntroStartTimeStr,
+            submitIntroEndTimeStr,
+            submitIntroSubmitting,
+            playerController,
+            onBackWithProgress,
+        ) {
+            while (true) {
+                val action = QtNativePlayerBridge.consumeAction()
+                if (action != null) {
+                    val parts = action.split(':', limit = 2)
+                    val payload = parts.getOrNull(1)
+                    val index = parts.getOrNull(1)?.toIntOrNull()
+                    when (parts.firstOrNull()) {
+                        "closePlayer" -> onBackWithProgress()
+                        "openSources" -> openSourcesPanel()
+                        "reloadSources" -> reloadActiveSources()
+                        "selectSourceFilter" -> {
+                            val filter = index?.let { nativeSourceFilters.getOrNull(it) }?.id
+                            PlayerStreamsRepository.selectSourceFilter(filter)
+                        }
+                        "selectSource" -> index?.let { nativeSources.getOrNull(it) }?.let(::switchToSource)
+                        "openEpisodes" -> openEpisodesPanel()
+                        "selectEpisode" -> index?.let { allEpisodes.getOrNull(it) }?.let(::selectEpisodeForPlayback)
+                        "selectEpisodeStreamFilter" -> {
+                            val filter = index?.let { nativeEpisodeStreamFilters.getOrNull(it) }?.id
+                            PlayerStreamsRepository.selectEpisodeStreamsFilter(filter)
+                        }
+                        "selectEpisodeStream" -> {
+                            val episode = episodeStreamsPanelState.selectedEpisode
+                            val stream = index?.let { nativeEpisodeStreams.getOrNull(it) }
+                            if (episode != null && stream != null) {
+                                switchToEpisodeStream(stream, episode)
+                            }
+                        }
+                        "backToEpisodes" -> {
+                            episodeStreamsPanelState = EpisodeStreamsPanelState()
+                            PlayerStreamsRepository.clearEpisodeStreams()
+                        }
+                        "reloadEpisodeStreams" -> reloadSelectedEpisodeStreams()
+                        "fetchAddonSubtitles" -> fetchAddonSubtitlesForActiveItem()
+                        "selectBuiltInSubtitle" -> {
+                            val subtitleIndex = index ?: -1
+                            val wasCustom = useCustomSubtitles
+                            selectedSubtitleIndex = subtitleIndex
+                            selectedAddonSubtitleId = null
+                            useCustomSubtitles = false
+                            if (wasCustom) {
+                                playerController?.clearExternalSubtitleAndSelect(subtitleIndex)
+                            } else {
+                                playerController?.selectSubtitleTrack(subtitleIndex)
+                            }
+                        }
+                        "selectAddonSubtitle" -> {
+                            val subtitle = index?.let { addonSubtitles.getOrNull(it) }
+                            if (subtitle != null) {
+                                selectedAddonSubtitleId = subtitle.id
+                                selectedSubtitleIndex = -1
+                                useCustomSubtitles = true
+                                playerController?.setSubtitleUri(subtitle.url)
+                            }
+                        }
+                        "setSubtitleStyle" -> {
+                            parts.getOrNull(1)?.toQtNativeSubtitleStyleOrNull(subtitleStyle)?.let { style ->
+                                PlayerSettingsRepository.setSubtitleStyle(style)
+                            }
+                        }
+                        "setResizeMode" -> {
+                            val mode = index?.toQtNativeResizeModeOrNull()
+                            if (mode != null) {
+                                resizeMode = mode
+                                PlayerSettingsRepository.setResizeMode(mode)
+                            }
+                        }
+                        "skipIntro" -> {
+                            val interval = activeSkipInterval
+                            if (interval != null) {
+                                playerController?.seekTo((interval.endTime * 1000).toLong())
+                                skipIntervalDismissed = true
+                            }
+                        }
+                        "playNextEpisode" -> {
+                            nextEpisodeAutoPlayJob?.cancel()
+                            playNextEpisode()
+                        }
+                        "dismissNextEpisode" -> {
+                            nextEpisodeAutoPlayJob?.cancel()
+                            showNextEpisodeCard = false
+                            nextEpisodeAutoPlaySearching = false
+                            nextEpisodeAutoPlaySourceName = null
+                            nextEpisodeAutoPlayCountdown = null
+                        }
+                        "dismissParentalGuide" -> {
+                            showParentalGuide = false
+                        }
+                        "openSubmitIntro" -> {
+                            if (submitIntroAvailable) {
+                                showSubmitIntroModal = true
+                                controlsVisible = true
+                            }
+                        }
+                        "dismissSubmitIntro" -> {
+                            showSubmitIntroModal = false
+                        }
+                        "setSubmitIntroSegmentType" -> {
+                            submitIntroSegmentType = when (payload) {
+                                "recap", "outro" -> payload
+                                else -> "intro"
+                            }
+                        }
+                        "setSubmitIntroStartTime" -> {
+                            submitIntroStartTimeStr = payload.orEmpty().take(16)
+                        }
+                        "setSubmitIntroEndTime" -> {
+                            submitIntroEndTimeStr = payload.orEmpty().take(16)
+                        }
+                        "submitIntro" -> submitIntroTimestamps()
+                    }
+                }
+                delay(120)
+            }
         }
 
         LaunchedEffect(activeSourceUrl, activeSourceAudioUrl, activeSourceHeaders, activeSourceResponseHeaders) {
@@ -1746,6 +2099,10 @@ fun PlayerScreen(
                 },
             )
 
+            if (qtNativePlayerHost) {
+                return@Box
+            }
+
             AnimatedVisibility(
                 visible = pausedOverlayVisible && !controlsVisible && !playerControlsLocked,
                 enter = fadeIn(animationSpec = tween(durationMillis = 220)),
@@ -1807,7 +2164,7 @@ fun PlayerScreen(
                     },
                     onSourcesClick = if (activeVideoId != null) { { openSourcesPanel() } } else null,
                     onEpisodesClick = if (isSeries) { { openEpisodesPanel() } } else null,
-                    onSubmitIntroClick = if (isSeries && playerSettingsUiState.introSubmitEnabled && playerSettingsUiState.introDbApiKey.isNotBlank()) { { showSubmitIntroModal = true } } else null,
+                    onSubmitIntroClick = if (submitIntroAvailable) { { showSubmitIntroModal = true } } else null,
                     parentalWarnings = parentalWarnings,
                     showParentalGuide = showParentalGuide,
                     onParentalGuideAnimationComplete = { showParentalGuide = false },
@@ -1981,17 +2338,7 @@ fun PlayerScreen(
                 currentStreamName = activeStreamTitle,
                 onFilterSelected = { PlayerStreamsRepository.selectSourceFilter(it) },
                 onStreamSelected = ::switchToSource,
-                onReload = {
-                    val type = contentType ?: parentMetaType
-                    val vid = activeVideoId ?: return@PlayerSourcesPanel
-                    PlayerStreamsRepository.loadSources(
-                        type = type,
-                        videoId = vid,
-                        season = activeSeasonNumber,
-                        episode = activeEpisodeNumber,
-                        forceRefresh = true,
-                    )
-                },
+                onReload = ::reloadActiveSources,
                 onDismiss = {
                     showSourcesPanel = false
                     controlsVisible = true
@@ -2014,30 +2361,7 @@ fun PlayerScreen(
                         streamsUiState = episodeStreamsRepoState,
                     ),
                     onSeasonSelected = { /* season tab change handled internally */ },
-                    onEpisodeSelected = { episode ->
-                        val downloadedEpisode = DownloadsRepository.findPlayableDownload(
-                            parentMetaId = parentMetaId,
-                            seasonNumber = episode.season,
-                            episodeNumber = episode.episode,
-                            videoId = episode.id,
-                        )
-                        if (downloadedEpisode != null) {
-                            switchToDownloadedEpisode(downloadedEpisode, episode)
-                            return@PlayerEpisodesPanel
-                        }
-
-                        val type = contentType ?: parentMetaType
-                        PlayerStreamsRepository.loadEpisodeStreams(
-                            type = type,
-                            videoId = episode.id,
-                            season = episode.season,
-                            episode = episode.episode,
-                        )
-                        episodeStreamsPanelState = EpisodeStreamsPanelState(
-                            showStreams = true,
-                            selectedEpisode = episode,
-                        )
-                    },
+                    onEpisodeSelected = ::selectEpisodeForPlayback,
                     onEpisodeStreamFilterSelected = {
                         PlayerStreamsRepository.selectEpisodeStreamsFilter(it)
                     },
@@ -2046,17 +2370,7 @@ fun PlayerScreen(
                         episodeStreamsPanelState = EpisodeStreamsPanelState()
                         PlayerStreamsRepository.clearEpisodeStreams()
                     },
-                    onReloadEpisodeStreams = {
-                        val episode = episodeStreamsPanelState.selectedEpisode ?: return@PlayerEpisodesPanel
-                        val type = contentType ?: parentMetaType
-                        PlayerStreamsRepository.loadEpisodeStreams(
-                            type = type,
-                            videoId = episode.id,
-                            season = episode.season,
-                            episode = episode.episode,
-                            forceRefresh = true,
-                        )
-                    },
+                    onReloadEpisodeStreams = ::reloadSelectedEpisodeStreams,
                     onDismiss = {
                         showEpisodesPanel = false
                         episodeStreamsPanelState = EpisodeStreamsPanelState()
@@ -2068,9 +2382,7 @@ fun PlayerScreen(
 
             val season = activeSeasonNumber
             val episode = activeEpisodeNumber
-            val imdbId = activeVideoId?.split(":")?.firstOrNull()?.takeIf { it.startsWith("tt") }
-                ?: parentMetaId.takeIf { it.startsWith("tt") }
-                ?: metaUiState.meta?.id?.takeIf { it.startsWith("tt") }
+            val imdbId = submitIntroImdbId
 
             if (showSubmitIntroModal && season != null && episode != null && !imdbId.isNullOrBlank()) {
                 com.nuvio.app.features.player.skip.SubmitIntroDialog(
@@ -2124,6 +2436,515 @@ private fun buildAddonSubtitleFetchKey(
         append('|')
         append(compatibleSubtitleAddons.sorted().joinToString("|"))
     }
+}
+
+private data class QtNativeFilterRow(
+    val id: String?,
+    val label: String,
+    val selected: Boolean,
+    val loading: Boolean = false,
+    val error: Boolean = false,
+)
+
+private fun buildQtNativeFilterRows(
+    groups: List<AddonStreamGroup>,
+    selectedFilter: String?,
+): List<QtNativeFilterRow> {
+    val rows = mutableListOf(
+        QtNativeFilterRow(
+            id = null,
+            label = "All",
+            selected = selectedFilter == null,
+        ),
+    )
+    val seenAddonIds = mutableSetOf<String>()
+    groups.forEach { group ->
+        if (!seenAddonIds.add(group.addonId)) return@forEach
+        rows += QtNativeFilterRow(
+            id = group.addonId,
+            label = group.addonName,
+            selected = selectedFilter == group.addonId,
+            loading = group.isLoading,
+            error = group.error != null,
+        )
+    }
+    return rows
+}
+
+private fun buildQtNativePlayerContextJson(
+    title: String,
+    logoUrl: String,
+    artworkUrl: String,
+    playerErrorMessage: String,
+    streamTitle: String,
+    providerName: String,
+    pauseDescription: String,
+    seasonNumber: Int?,
+    episodeNumber: Int?,
+    episodeTitle: String?,
+    sources: List<StreamItem>,
+    sourceFilters: List<QtNativeFilterRow>,
+    sourcePickerAvailable: Boolean,
+    currentSourceUrl: String?,
+    currentSourceName: String?,
+    sourcesLoading: Boolean,
+    episodes: List<MetaVideo>,
+    episodePickerAvailable: Boolean,
+    parentMetaType: String,
+    parentMetaId: String,
+    progressByVideoId: Map<String, WatchProgressEntry>,
+    watchedKeys: Set<String>,
+    blurUnwatchedEpisodes: Boolean,
+    currentSeason: Int?,
+    currentEpisode: Int?,
+    episodeStreams: List<StreamItem>,
+    episodeStreamFilters: List<QtNativeFilterRow>,
+    episodeStreamsLoading: Boolean,
+    selectedEpisode: MetaVideo?,
+    addonSubtitles: List<AddonSubtitle>,
+    selectedAddonSubtitleId: String?,
+    addonSubtitlesLoading: Boolean,
+    subtitleStyle: SubtitleStyleState,
+    parentalWarnings: List<ParentalWarning>,
+    parentalGuideVisible: Boolean,
+    submitIntroAvailable: Boolean,
+    submitIntroVisible: Boolean,
+    submitIntroSubmitting: Boolean,
+    submitIntroSegmentType: String,
+    submitIntroStartTime: String,
+    submitIntroEndTime: String,
+    activeSkipInterval: SkipInterval?,
+    skipIntroDismissed: Boolean,
+    nextEpisodeInfo: NextEpisodeInfo?,
+    nextEpisodeAutoPlaySearching: Boolean,
+    nextEpisodeAutoPlaySourceName: String,
+    nextEpisodeAutoPlayCountdown: Int?,
+    resizeMode: PlayerResizeMode,
+    showLoadingOverlay: Boolean,
+    holdToSpeedEnabled: Boolean,
+    holdToSpeedValue: Float,
+): String = buildString {
+    append('{')
+    appendJsonField("title", title)
+    append(',')
+    appendJsonField("logoUrl", logoUrl)
+    append(',')
+    appendJsonField("artworkUrl", artworkUrl)
+    append(',')
+    appendJsonField("playerErrorMessage", playerErrorMessage)
+    append(',')
+    appendJsonField("streamTitle", streamTitle)
+    append(',')
+    appendJsonField("providerName", providerName)
+    append(',')
+    appendJsonField("pauseDescription", pauseDescription)
+    append(',')
+    appendJsonField(
+        "episodeLabel",
+        playerEpisodeLabel(seasonNumber, episodeNumber, episodeTitle),
+    )
+    append(',')
+    appendJsonField("sourcesLoading", sourcesLoading)
+    append(',')
+    appendJsonField("sourcePickerAvailable", sourcePickerAvailable)
+    append(',')
+    appendJsonArray("sourceFilters") {
+        sourceFilters.forEachIndexed { index, filter ->
+            if (index > 0) append(',')
+            append('{')
+            appendJsonField("index", index)
+            append(',')
+            appendJsonField("label", filter.label)
+            append(',')
+            appendJsonField("selected", filter.selected)
+            append(',')
+            appendJsonField("loading", filter.loading)
+            append(',')
+            appendJsonField("error", filter.error)
+            append('}')
+        }
+    }
+    append(',')
+    appendJsonArray("sources") {
+        sources.forEachIndexed { index, stream ->
+            if (index > 0) append(',')
+            append('{')
+            appendJsonField("index", index)
+            append(',')
+            appendJsonField("label", stream.streamLabel)
+            append(',')
+            appendJsonField("subtitle", stream.streamSubtitle.orEmpty())
+            append(',')
+            appendJsonField("provider", stream.addonName)
+            append(',')
+            appendJsonField("size", stream.behaviorHints.videoSize?.let(::formatQtNativeBytes).orEmpty())
+            append(',')
+            appendJsonField("current", isQtNativeCurrentStream(stream, currentSourceUrl, currentSourceName))
+            append('}')
+        }
+    }
+    append(',')
+    appendJsonField("episodePickerAvailable", episodePickerAvailable)
+    append(',')
+    appendJsonArray("episodes") {
+        episodes.forEachIndexed { index, episode ->
+            val episodeVideoId = buildPlaybackVideoId(
+                parentMetaId = parentMetaId,
+                seasonNumber = episode.season,
+                episodeNumber = episode.episode,
+                fallbackVideoId = episode.id,
+            )
+            val progressEntry = progressByVideoId[episodeVideoId]
+            val isCurrentEpisode = episode.season == currentSeason && episode.episode == currentEpisode
+            val isWatched = progressEntry?.isEffectivelyCompleted == true ||
+                WatchingState.isEpisodeWatched(
+                    watchedKeys = watchedKeys,
+                    metaType = parentMetaType,
+                    metaId = parentMetaId,
+                    episode = episode,
+                )
+            val progressPercent = progressEntry
+                ?.normalizedProgressPercent
+                ?.roundToInt()
+                ?.coerceIn(0, 100)
+                ?: -1
+            if (index > 0) append(',')
+            append('{')
+            appendJsonField("index", index)
+            append(',')
+            appendJsonField("season", episode.season ?: -1)
+            append(',')
+            appendJsonField("episode", episode.episode ?: -1)
+            append(',')
+            appendJsonField("label", playerEpisodeCode(episode.season, episode.episode))
+            append(',')
+            appendJsonField("title", episode.title)
+            append(',')
+            appendJsonField("overview", episode.overview.orEmpty())
+            append(',')
+            appendJsonField("thumbnail", episode.thumbnail.orEmpty())
+            append(',')
+            appendJsonField("current", isCurrentEpisode)
+            append(',')
+            appendJsonField("watched", isWatched)
+            append(',')
+            appendJsonField("progressPercent", progressPercent)
+            append(',')
+            appendJsonField("blurArtwork", blurUnwatchedEpisodes && !isWatched && !isCurrentEpisode)
+            append('}')
+        }
+    }
+    append(',')
+    appendJsonField("currentSeason", currentSeason ?: -1)
+    append(',')
+    appendJsonField("currentEpisode", currentEpisode ?: -1)
+    append(',')
+    appendJsonField("episodeStreamsLoading", episodeStreamsLoading)
+    append(',')
+    appendJsonArray("episodeStreamFilters") {
+        episodeStreamFilters.forEachIndexed { index, filter ->
+            if (index > 0) append(',')
+            append('{')
+            appendJsonField("index", index)
+            append(',')
+            appendJsonField("label", filter.label)
+            append(',')
+            appendJsonField("selected", filter.selected)
+            append(',')
+            appendJsonField("loading", filter.loading)
+            append(',')
+            appendJsonField("error", filter.error)
+            append('}')
+        }
+    }
+    append(',')
+    appendJsonField(
+        "selectedEpisodeLabel",
+        selectedEpisode?.let { episode ->
+            listOf(playerEpisodeCode(episode.season, episode.episode), episode.title)
+                .filter { it.isNotBlank() }
+                .joinToString(" - ")
+        }.orEmpty(),
+    )
+    append(',')
+    appendJsonArray("episodeStreams") {
+        episodeStreams.forEachIndexed { index, stream ->
+            if (index > 0) append(',')
+            append('{')
+            appendJsonField("index", index)
+            append(',')
+            appendJsonField("label", stream.streamLabel)
+            append(',')
+            appendJsonField("subtitle", stream.streamSubtitle.orEmpty())
+            append(',')
+            appendJsonField("provider", stream.addonName)
+            append(',')
+            appendJsonField("size", stream.behaviorHints.videoSize?.let(::formatQtNativeBytes).orEmpty())
+            append('}')
+        }
+    }
+    append(',')
+    appendJsonField("addonSubtitlesLoading", addonSubtitlesLoading)
+    append(',')
+    appendJsonArray("addonSubtitles") {
+        addonSubtitles.forEachIndexed { index, subtitle ->
+            if (index > 0) append(',')
+            append('{')
+            appendJsonField("index", index)
+            append(',')
+            appendJsonField("id", subtitle.id)
+            append(',')
+            appendJsonField("url", subtitle.url)
+            append(',')
+            appendJsonField("label", subtitle.display)
+            append(',')
+            appendJsonField("language", subtitle.language.ifBlank { "unknown" }.uppercase())
+            append(',')
+            appendJsonField("selected", subtitle.id == selectedAddonSubtitleId)
+            append('}')
+        }
+    }
+    append(',')
+    appendJsonObject("subtitleStyle") {
+        appendJsonField("textColor", subtitleStyle.textColor.toQtNativeHexColor())
+        append(',')
+        appendJsonField("outlineEnabled", subtitleStyle.outlineEnabled)
+        append(',')
+        appendJsonField("fontSizeSp", subtitleStyle.fontSizeSp)
+        append(',')
+        appendJsonField("bottomOffset", subtitleStyle.bottomOffset)
+    }
+    append(',')
+    appendJsonField("parentalGuideVisible", parentalGuideVisible)
+    append(',')
+    appendJsonArray("parentalWarnings") {
+        parentalWarnings.forEachIndexed { index, warning ->
+            if (index > 0) append(',')
+            append('{')
+            appendJsonField("label", warning.label)
+            append(',')
+            appendJsonField("severity", warning.severity)
+            append('}')
+        }
+    }
+    append(',')
+    appendJsonField("submitIntroAvailable", submitIntroAvailable)
+    append(',')
+    appendJsonField("submitIntroVisible", submitIntroVisible)
+    append(',')
+    appendJsonField("submitIntroSubmitting", submitIntroSubmitting)
+    append(',')
+    appendJsonField("submitIntroSegmentType", submitIntroSegmentType)
+    append(',')
+    appendJsonField("submitIntroStartTime", submitIntroStartTime)
+    append(',')
+    appendJsonField("submitIntroEndTime", submitIntroEndTime)
+    append(',')
+    appendJsonField("skipIntroAvailable", activeSkipInterval != null)
+    append(',')
+    appendJsonField("skipIntroDismissed", skipIntroDismissed)
+    append(',')
+    appendJsonField(
+        "skipIntroKey",
+        activeSkipInterval?.let { interval ->
+            listOf(interval.startTime, interval.endTime, interval.type).joinToString(":")
+        }.orEmpty(),
+    )
+    append(',')
+    appendJsonField("skipIntroLabel", activeSkipInterval?.type?.let(::skipIntervalLabel).orEmpty())
+    append(',')
+    appendJsonField("nextEpisodeAvailable", nextEpisodeInfo != null)
+    append(',')
+    appendJsonField("nextEpisodePlayable", nextEpisodeInfo?.hasAired == true)
+    append(',')
+    appendJsonField("nextEpisodeThumbnail", nextEpisodeInfo?.thumbnail.orEmpty())
+    append(',')
+    appendJsonField("nextEpisodeUnairedMessage", nextEpisodeInfo?.unairedMessage.orEmpty())
+    append(',')
+    appendJsonField("nextEpisodeAutoPlaySearching", nextEpisodeAutoPlaySearching && nextEpisodeInfo != null)
+    append(',')
+    appendJsonField("nextEpisodeAutoPlaySourceName", nextEpisodeAutoPlaySourceName)
+    append(',')
+    appendJsonField("nextEpisodeAutoPlayCountdown", nextEpisodeAutoPlayCountdown ?: -1)
+    append(',')
+    appendJsonField("resizeMode", resizeMode.name)
+    append(',')
+    appendJsonField("showLoadingOverlay", showLoadingOverlay)
+    append(',')
+    appendJsonField("holdToSpeedEnabled", holdToSpeedEnabled)
+    append(',')
+    appendJsonField("holdToSpeedValue", holdToSpeedValue)
+    append(',')
+    appendJsonField(
+        "nextEpisodeLabel",
+        nextEpisodeInfo?.let { info ->
+            listOf(playerEpisodeCode(info.season, info.episode), info.title)
+                .filter { it.isNotBlank() }
+                .joinToString(" - ")
+        }.orEmpty(),
+    )
+    append('}')
+}
+
+private fun StringBuilder.appendJsonArray(name: String, content: StringBuilder.() -> Unit) {
+    append('"')
+    append(name)
+    append("\":[")
+    content()
+    append(']')
+}
+
+private fun StringBuilder.appendJsonObject(name: String, content: StringBuilder.() -> Unit) {
+    append('"')
+    append(name)
+    append("\":{")
+    content()
+    append('}')
+}
+
+private fun StringBuilder.appendJsonField(name: String, value: String) {
+    append('"')
+    append(name)
+    append("\":\"")
+    append(value.jsonEscapedForQtContext())
+    append('"')
+}
+
+private fun StringBuilder.appendJsonField(name: String, value: Boolean) {
+    append('"')
+    append(name)
+    append("\":")
+    append(if (value) "true" else "false")
+}
+
+private fun StringBuilder.appendJsonField(name: String, value: Int) {
+    append('"')
+    append(name)
+    append("\":")
+    append(value)
+}
+
+private fun StringBuilder.appendJsonField(name: String, value: Float) {
+    append('"')
+    append(name)
+    append("\":")
+    append(value.coerceIn(0f, 10f))
+}
+
+private fun String.jsonEscapedForQtContext(): String = buildString(length + 8) {
+    this@jsonEscapedForQtContext.forEach { char ->
+        when (char) {
+            '\\' -> append("\\\\")
+            '"' -> append("\\\"")
+            '\b' -> append("\\b")
+            '\u000C' -> append("\\f")
+            '\n' -> append("\\n")
+            '\r' -> append("\\r")
+            '\t' -> append("\\t")
+            else -> append(char)
+        }
+    }
+}
+
+private fun String.toQtNativeSubtitleStyleOrNull(current: SubtitleStyleState): SubtitleStyleState? {
+    val parts = split(',')
+    if (parts.size != 4) return null
+    val color = parts[0].toQtNativeColorOrNull() ?: current.textColor
+    val outlineEnabled = parts[1] == "1" || parts[1].equals("true", ignoreCase = true)
+    val fontSizeSp = parts[2].toIntOrNull()?.coerceIn(12, 40) ?: current.fontSizeSp
+    val bottomOffset = parts[3].toIntOrNull()?.coerceIn(0, 200) ?: current.bottomOffset
+    return current.copy(
+        textColor = color,
+        outlineEnabled = outlineEnabled,
+        fontSizeSp = fontSizeSp,
+        bottomOffset = bottomOffset,
+    )
+}
+
+private fun String.toQtNativeSubmitSecondsOrNull(): Double? {
+    if (isBlank()) return null
+    val separator = when {
+        contains(':') -> ":"
+        contains('.') -> "."
+        else -> null
+    }
+    if (separator != null) {
+        val parts = split(separator)
+        if (parts.size == 2) {
+            val minutes = parts[0].toIntOrNull() ?: return null
+            val seconds = parts[1].toIntOrNull() ?: return null
+            if (seconds in 0..59) return (minutes * 60 + seconds).toDouble()
+        }
+    }
+    return toDoubleOrNull()
+}
+
+private fun Int.toQtNativeResizeModeOrNull(): PlayerResizeMode? =
+    when (this) {
+        0 -> PlayerResizeMode.Fit
+        1 -> PlayerResizeMode.Fill
+        2 -> PlayerResizeMode.Zoom
+        else -> null
+    }
+
+private fun String.toQtNativeColorOrNull(): Color? {
+    val value = trim().removePrefix("#")
+    if (value.length != 6) return null
+    val red = value.substring(0, 2).toIntOrNull(16) ?: return null
+    val green = value.substring(2, 4).toIntOrNull(16) ?: return null
+    val blue = value.substring(4, 6).toIntOrNull(16) ?: return null
+    return Color(red / 255f, green / 255f, blue / 255f)
+}
+
+private fun Color.toQtNativeHexColor(): String {
+    val redInt = (red * 255f).roundToInt().coerceIn(0, 255)
+    val greenInt = (green * 255f).roundToInt().coerceIn(0, 255)
+    val blueInt = (blue * 255f).roundToInt().coerceIn(0, 255)
+    return "#${redInt.toHexByte()}${greenInt.toHexByte()}${blueInt.toHexByte()}"
+}
+
+private fun Int.toHexByte(): String {
+    val digits = "0123456789ABCDEF"
+    val value = coerceIn(0, 255)
+    return "${digits[value / 16]}${digits[value % 16]}"
+}
+
+private fun playerEpisodeCode(season: Int?, episode: Int?): String =
+    when {
+        season != null && episode != null -> "S${season.toString().padStart(2, '0')} E${episode.toString().padStart(2, '0')}"
+        episode != null -> "Episode $episode"
+        else -> ""
+    }
+
+private fun playerEpisodeLabel(season: Int?, episode: Int?, title: String?): String =
+    listOf(playerEpisodeCode(season, episode), title.orEmpty())
+        .filter { it.isNotBlank() }
+        .joinToString(" - ")
+
+private fun skipIntervalLabel(type: String): String =
+    when (type.lowercase()) {
+        "intro", "op", "mixed-op" -> "Skip intro"
+        "outro", "ed", "mixed-ed", "credits" -> "Skip outro"
+        "recap" -> "Skip recap"
+        else -> "Skip"
+    }
+
+private fun formatQtNativeBytes(bytes: Long): String {
+    val gib = bytes.toDouble() / (1024.0 * 1024.0 * 1024.0)
+    if (gib >= 1.0) return "${kotlin.math.round(gib * 10.0) / 10.0} GB"
+    val mib = bytes.toDouble() / (1024.0 * 1024.0)
+    return "${kotlin.math.round(mib).toInt()} MB"
+}
+
+private fun isQtNativeCurrentStream(
+    stream: StreamItem,
+    currentUrl: String?,
+    currentName: String?,
+): Boolean {
+    if (currentUrl != null && stream.directPlaybackUrl == currentUrl) return true
+    return currentName != null &&
+        stream.streamLabel.equals(currentName, ignoreCase = true) &&
+        stream.directPlaybackUrl == currentUrl
 }
 
 private fun AddonResource.isCompatibleSubtitleResource(type: String, videoId: String): Boolean {

@@ -17,6 +17,7 @@
                 globalThis.qt.webChannelTransport &&
                 typeof globalThis.QWebChannel === "function"
             );
+            globalThis.nuvioQtNativeHost = isQtHost;
             globalThis.nuvioNativePlayerQueue = queue;
 
             function flushQueue() {
@@ -48,6 +49,8 @@
                 try {
                     const player = globalThis.nuvioNativePlayer;
                     if (!player) return false;
+                    const numericValue = Number(value);
+                    const trackValue = Number.isFinite(numericValue) ? Math.trunc(numericValue) : -1;
                     switch (command) {
                         case "pause":
                             player.pause();
@@ -64,11 +67,104 @@
                         case "seekBy":
                             player.seekBy(Number(value || 0));
                             return true;
+                        case "setSpeed":
+                            player.setPlaybackSpeed(Number(value || 1));
+                            return true;
+                        case "setResizeMode":
+                            if (typeof player.setResizeMode === "function") {
+                                player.setResizeMode(trackValue);
+                                return true;
+                            }
+                            return false;
+                        case "selectAudioTrack":
+                            player.selectAudioTrack(trackValue);
+                            return true;
+                        case "selectSubtitleTrack":
+                            player.selectSubtitleTrack(trackValue);
+                            return true;
+                        case "clearExternalSubtitle":
+                            player.clearExternalSubtitle();
+                            return true;
+                        case "clearExternalSubtitleAndSelect":
+                            player.clearExternalSubtitleAndSelect(trackValue);
+                            return true;
                         default:
                             return false;
                     }
                 } catch (_) {
                     return false;
+                }
+            };
+
+            globalThis.nuvioQtStringCommandNative = function (command, value) {
+                if (!isQtHost) return false;
+                try {
+                    const player = globalThis.nuvioNativePlayer;
+                    if (!player) return false;
+                    switch (command) {
+                        case "setSubtitleUri":
+                            player.setSubtitleUri(String(value || ""));
+                            return true;
+                        case "applySubtitleStyle":
+                            player.applySubtitleStyle(String(value || "{}"));
+                            return true;
+                        default:
+                            return false;
+                    }
+                } catch (_) {
+                    return false;
+                }
+            };
+
+            globalThis.nuvioQtSetPlayerContext = function (contextJson) {
+                if (!isQtHost) return false;
+                try {
+                    const player = globalThis.nuvioNativePlayer;
+                    if (!player || typeof player.updatePlayerContext !== "function") return false;
+                    player.updatePlayerContext(String(contextJson || "{}"));
+                    return true;
+                } catch (_) {
+                    return false;
+                }
+            };
+
+            globalThis.nuvioQtConsumePlayerAction = function () {
+                if (!isQtHost) return "";
+                try {
+                    const player = globalThis.nuvioNativePlayer;
+                    if (!player || typeof player.pendingPlayerAction !== "string") return "";
+                    const token = String(player.pendingPlayerAction || "");
+                    if (!token || token === globalThis.nuvioQtLastConsumedActionToken) return "";
+                    globalThis.nuvioQtLastConsumedActionToken = token;
+                    if (typeof player.acknowledgePlayerAction === "function") {
+                        player.acknowledgePlayerAction(token);
+                    }
+                    const separator = token.indexOf("\n");
+                    return separator >= 0 ? token.slice(separator + 1) : token;
+                } catch (_) {
+                    return "";
+                }
+            };
+
+            globalThis.nuvioQtTakePlayerSnapshot = function () {
+                if (!isQtHost) return "";
+                try {
+                    const player = globalThis.nuvioNativePlayer;
+                    if (!player || typeof player.playerSnapshotJson !== "string") return "";
+                    return String(player.playerSnapshotJson || "");
+                } catch (_) {
+                    return "";
+                }
+            };
+
+            globalThis.nuvioQtTakePlayerTracks = function () {
+                if (!isQtHost) return "";
+                try {
+                    const player = globalThis.nuvioNativePlayer;
+                    if (!player || typeof player.playerTracksJson !== "string") return "";
+                    return String(player.playerTracksJson || "");
+                } catch (_) {
+                    return "";
                 }
             };
 

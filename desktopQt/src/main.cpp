@@ -1,5 +1,7 @@
 #include "mpv_render_widget.h"
 #include "native_player_bridge.h"
+#include "player_overlay_controller.h"
+#include "player_surface_widget.h"
 
 #include <QApplication>
 #include <QByteArray>
@@ -11,10 +13,13 @@
 #include <QMessageBox>
 #include <QObject>
 #include <QPointer>
+#include <QQuickWindow>
+#include <QSGRendererInterface>
 #include <QShortcut>
 #include <QStandardPaths>
 #include <QStackedWidget>
 #include <QString>
+#include <QSurfaceFormat>
 #include <QUrl>
 #include <QWebChannel>
 #include <QWebEnginePage>
@@ -48,6 +53,26 @@ void appendChromiumFlag(const QByteArray &flag)
 void configureProcessEnvironment()
 {
     appendChromiumFlag("--disable-web-security");
+    qputenv("QSG_RHI_BACKEND", "opengl");
+}
+
+void configureOpenGLComposition()
+{
+    QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
+    QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
+
+    QSurfaceFormat format;
+    format.setRenderableType(QSurfaceFormat::OpenGL);
+    format.setDepthBufferSize(0);
+    format.setStencilBufferSize(0);
+    format.setSwapBehavior(QSurfaceFormat::DoubleBuffer);
+
+#if defined(Q_OS_MACOS)
+    format.setVersion(3, 2);
+    format.setProfile(QSurfaceFormat::CoreProfile);
+#endif
+
+    QSurfaceFormat::setDefaultFormat(format);
 }
 
 void registerNuvioScheme()
@@ -185,6 +210,7 @@ void configureProfile(QWebEngineProfile *profile)
 int main(int argc, char *argv[])
 {
     configureProcessEnvironment();
+    configureOpenGLComposition();
     registerNuvioScheme();
 
     QApplication app(argc, argv);
@@ -205,6 +231,9 @@ int main(int argc, char *argv[])
     configureProfile(profile);
     profile->installUrlSchemeHandler(QByteArray(kScheme), new LocalWebSchemeHandler(webRoot, profile));
 
+    NativePlayerBridge nativePlayerBridge(&app);
+    PlayerOverlayController playerOverlayController(&app);
+
     QMainWindow window;
     window.setWindowTitle("Nuvio");
     window.resize(1280, 800);
@@ -215,7 +244,6 @@ int main(int argc, char *argv[])
     stack->setCurrentWidget(webView);
     window.setCentralWidget(stack);
 
-    NativePlayerBridge nativePlayerBridge(&window);
     QWebChannel webChannel(webView);
     webChannel.registerObject(QStringLiteral("nuvioNativePlayer"), &nativePlayerBridge);
     webView->page()->setWebChannel(&webChannel);
@@ -226,15 +254,40 @@ int main(int argc, char *argv[])
         if (playerContainer) return playerContainer;
 
         auto *nativeWindow = new MpvRenderWidget();
-        auto *container = QWidget::createWindowContainer(nativeWindow, stack);
+        auto *container = new PlayerSurfaceWidget(nativeWindow, &playerOverlayController, stack);
         container->setFocusPolicy(Qt::StrongFocus);
         playerWindow = nativeWindow;
         playerContainer = container;
         stack->addWidget(container);
 
+        QObject::connect(
+            nativeWindow,
+            &MpvRenderWidget::playbackSnapshotChanged,
+            &playerOverlayController,
+            &PlayerOverlayController::setPlaybackSnapshot
+        );
+        QObject::connect(
+            nativeWindow,
+            &MpvRenderWidget::playbackSnapshotChanged,
+            &nativePlayerBridge,
+            &NativePlayerBridge::updatePlaybackSnapshot
+        );
+        QObject::connect(
+            nativeWindow,
+            &MpvRenderWidget::tracksChanged,
+            &playerOverlayController,
+            &PlayerOverlayController::setTracks
+        );
+        QObject::connect(
+            nativeWindow,
+            &MpvRenderWidget::tracksChanged,
+            &nativePlayerBridge,
+            &NativePlayerBridge::updateTracks
+        );
         QObject::connect(nativeWindow, &MpvRenderWidget::playbackStopped, &window, [stack, webView] {
             stack->setCurrentWidget(webView);
         });
+        QObject::connect(nativeWindow, &MpvRenderWidget::playerError, &playerOverlayController, &PlayerOverlayController::setPlayerError);
         QObject::connect(nativeWindow, &MpvRenderWidget::playerError, &window, [](const QString &message) {
             qWarning().noquote() << "[NuvioPlayer]" << message;
         });
@@ -244,12 +297,76 @@ int main(int argc, char *argv[])
 
     QObject::connect(
         &nativePlayerBridge,
+        &NativePlayerBridge::playerContextUpdated,
+        &playerOverlayController,
+        &PlayerOverlayController::setPlayerContextJson
+    );
+    QObject::connect(
+        &playerOverlayController,
+        &PlayerOverlayController::playerActionRequested,
+        &nativePlayerBridge,
+        &NativePlayerBridge::queuePlayerAction
+    );
+
+    QObject::connect(&playerOverlayController, &PlayerOverlayController::pauseRequested, &window, [&playerWindow] {
+        if (playerWindow) playerWindow->pause();
+    });
+    QObject::connect(&playerOverlayController, &PlayerOverlayController::resumeRequested, &window, [&playerWindow] {
+        if (playerWindow) playerWindow->resume();
+    });
+    QObject::connect(&playerOverlayController, &PlayerOverlayController::seekToRequested, &window, [&playerWindow](qint64 positionMs) {
+        if (playerWindow) playerWindow->seekTo(positionMs);
+    });
+    QObject::connect(&playerOverlayController, &PlayerOverlayController::seekByRequested, &window, [&playerWindow](qint64 offsetMs) {
+        if (playerWindow) playerWindow->seekBy(offsetMs);
+    });
+    QObject::connect(&playerOverlayController, &PlayerOverlayController::playbackSpeedRequested, &window, [&playerWindow](double speed) {
+        if (playerWindow) playerWindow->setPlaybackSpeed(speed);
+    });
+    QObject::connect(&playerOverlayController, &PlayerOverlayController::volumeRequested, &window, [&playerWindow](double fraction) {
+        if (playerWindow) playerWindow->setVolumeFraction(fraction);
+    });
+    QObject::connect(&playerOverlayController, &PlayerOverlayController::brightnessRequested, &window, [&playerWindow](double fraction) {
+        if (playerWindow) playerWindow->setBrightnessFraction(fraction);
+    });
+    QObject::connect(&playerOverlayController, &PlayerOverlayController::resizeModeRequested, &window, [&playerWindow](int mode) {
+        if (playerWindow) playerWindow->setResizeMode(mode);
+    });
+    QObject::connect(&playerOverlayController, &PlayerOverlayController::trackRefreshRequested, &window, [&playerWindow] {
+        if (playerWindow) playerWindow->refreshTracks();
+    });
+    QObject::connect(&playerOverlayController, &PlayerOverlayController::audioTrackRequested, &window, [&playerWindow](int index) {
+        if (playerWindow) playerWindow->selectAudioTrack(index);
+    });
+    QObject::connect(&playerOverlayController, &PlayerOverlayController::subtitleTrackRequested, &window, [&playerWindow](int index) {
+        if (playerWindow) playerWindow->selectSubtitleTrack(index);
+    });
+    QObject::connect(&playerOverlayController, &PlayerOverlayController::externalSubtitleRequested, &window, [&playerWindow](const QString &url) {
+        if (playerWindow) playerWindow->addExternalSubtitle(url);
+    });
+    QObject::connect(
+        &playerOverlayController,
+        &PlayerOverlayController::subtitleStyleRequested,
+        &window,
+        [&playerWindow](const QString &textColor, bool outlineEnabled, int fontSizeSp, int bottomOffset) {
+            if (playerWindow) playerWindow->setSubtitleStyle(textColor, outlineEnabled, fontSizeSp, bottomOffset);
+        }
+    );
+    QObject::connect(&playerOverlayController, &PlayerOverlayController::stopRequested, &window, [stack, webView, &playerWindow] {
+        if (playerWindow) playerWindow->stop();
+        stack->setCurrentWidget(webView);
+    });
+
+    QObject::connect(
+        &nativePlayerBridge,
         &NativePlayerBridge::playRequested,
         &window,
-        [stack, ensurePlayerContainer, &playerWindow](const QString &url, const QString &headersJson, qint64 startPositionMs) {
+        [stack, ensurePlayerContainer, &playerWindow, &playerOverlayController](const QString &url, const QString &headersJson, qint64 startPositionMs) {
             auto *container = ensurePlayerContainer();
             stack->setCurrentWidget(container);
             container->setFocus();
+            playerOverlayController.setFallbackTitleFromUrl(url);
+            playerOverlayController.resetForPlayback();
             if (playerWindow) playerWindow->playUrl(url, headersJson, startPositionMs);
         }
     );
@@ -265,6 +382,37 @@ int main(int argc, char *argv[])
     QObject::connect(&nativePlayerBridge, &NativePlayerBridge::seekByRequested, &window, [&playerWindow](qint64 offsetMs) {
         if (playerWindow) playerWindow->seekBy(offsetMs);
     });
+    QObject::connect(&nativePlayerBridge, &NativePlayerBridge::playbackSpeedRequested, &window, [&playerWindow](double speed) {
+        if (playerWindow) playerWindow->setPlaybackSpeed(speed);
+    });
+    QObject::connect(&nativePlayerBridge, &NativePlayerBridge::resizeModeRequested, &window, [&playerWindow](int mode) {
+        if (playerWindow) playerWindow->setResizeMode(mode);
+    });
+    QObject::connect(&nativePlayerBridge, &NativePlayerBridge::audioTrackRequested, &window, [&playerWindow](int index) {
+        if (playerWindow) playerWindow->selectAudioTrack(index);
+    });
+    QObject::connect(&nativePlayerBridge, &NativePlayerBridge::subtitleTrackRequested, &window, [&playerWindow](int index) {
+        if (playerWindow) playerWindow->selectSubtitleTrack(index);
+    });
+    QObject::connect(&nativePlayerBridge, &NativePlayerBridge::externalSubtitleRequested, &window, [&playerWindow](const QString &url) {
+        if (playerWindow) playerWindow->addExternalSubtitle(url);
+    });
+    QObject::connect(&nativePlayerBridge, &NativePlayerBridge::clearExternalSubtitleRequested, &window, [&playerWindow] {
+        if (playerWindow) playerWindow->clearExternalSubtitle();
+    });
+    QObject::connect(&nativePlayerBridge, &NativePlayerBridge::clearExternalSubtitleAndSelectRequested, &window, [&playerWindow](int index) {
+        if (!playerWindow) return;
+        playerWindow->clearExternalSubtitle();
+        playerWindow->selectSubtitleTrack(index);
+    });
+    QObject::connect(
+        &nativePlayerBridge,
+        &NativePlayerBridge::subtitleStyleRequested,
+        &window,
+        [&playerWindow](const QString &textColor, bool outlineEnabled, int fontSizeSp, int bottomOffset) {
+            if (playerWindow) playerWindow->setSubtitleStyle(textColor, outlineEnabled, fontSizeSp, bottomOffset);
+        }
+    );
     QObject::connect(
         &nativePlayerBridge,
         &NativePlayerBridge::stopRequested,
@@ -284,6 +432,8 @@ int main(int argc, char *argv[])
     webView->settings()->setAttribute(QWebEngineSettings::LocalStorageEnabled, true);
     webView->settings()->setAttribute(QWebEngineSettings::LocalContentCanAccessRemoteUrls, true);
     webView->load(QUrl(QStringLiteral("nuvio://app/index.html")));
+    ensurePlayerContainer();
+    stack->setCurrentWidget(webView);
     window.show();
 
     return QApplication::exec();

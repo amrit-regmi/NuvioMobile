@@ -18,7 +18,8 @@ set(NUVIO_WEB_OUTPUT "${NUVIO_REPO_ROOT}/composeApp/build/kotlin-webpack/wasmJs/
 set(NUVIO_WEB_RESOURCES "${NUVIO_REPO_ROOT}/composeApp/build/processedResources/wasmJs/main")
 set(NUVIO_WEB_STAGE "${CMAKE_CURRENT_BINARY_DIR}/web")
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets WebChannel WebEngineCore WebEngineWidgets OpenGL)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets WebChannel WebEngineCore WebEngineWidgets OpenGL OpenGLWidgets)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Quick QuickControls2 QuickWidgets)
 find_package(PkgConfig QUIET)
 
 if(PkgConfig_FOUND)
@@ -57,6 +58,39 @@ qt_add_executable(NuvioQtDesktop
     src/mpv_render_widget.h
     src/native_player_bridge.cpp
     src/native_player_bridge.h
+    src/player_overlay_controller.cpp
+    src/player_overlay_controller.h
+    src/player_surface_widget.cpp
+    src/player_surface_widget.h
+)
+
+qt_add_resources(NuvioQtDesktop nuvio_qml_overlay
+    PREFIX "/"
+    FILES
+        qml/PlayerOverlay.qml
+        qml/icons/ic_arrow_back.svg
+        qml/icons/ic_brightness.svg
+        qml/icons/ic_cloud_download.svg
+        qml/icons/ic_close.svg
+        qml/icons/ic_fast_forward.svg
+        qml/icons/ic_fast_rewind.svg
+        qml/icons/ic_flag.svg
+        qml/icons/ic_forward_10.svg
+        qml/icons/ic_lock.svg
+        qml/icons/ic_lock_open.svg
+        qml/icons/ic_player_aspect_ratio.svg
+        qml/icons/ic_player_audio_filled.svg
+        qml/icons/ic_player_pause.svg
+        qml/icons/ic_player_play.svg
+        qml/icons/ic_player_subtitles.svg
+        qml/icons/ic_replay_10.svg
+        qml/icons/ic_refresh.svg
+        qml/icons/ic_skip_next.svg
+        qml/icons/ic_speed.svg
+        qml/icons/ic_swap_horiz.svg
+        qml/icons/ic_video_library.svg
+        qml/icons/ic_volume_off.svg
+        qml/icons/ic_volume_up.svg
 )
 
 target_link_libraries(NuvioQtDesktop
@@ -66,6 +100,10 @@ target_link_libraries(NuvioQtDesktop
         Qt6::WebEngineCore
         Qt6::WebEngineWidgets
         Qt6::OpenGL
+        Qt6::OpenGLWidgets
+        Qt6::Quick
+        Qt6::QuickControls2
+        Qt6::QuickWidgets
         ${NUVIO_MPV_TARGET}
 )
 

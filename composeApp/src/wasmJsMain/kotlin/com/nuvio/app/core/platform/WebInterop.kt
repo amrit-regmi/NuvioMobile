@@ -38,8 +38,26 @@ private external fun jsNavigatorLanguages(): String
 @JsFun("(url, headersJson, startPositionMs) => { try { return globalThis.nuvioQtPlayNative?.(url, headersJson, Number(startPositionMs || 0)) === true; } catch (_) { return false; } }")
 internal external fun playQtNativeMedia(url: String, headersJson: String, startPositionMs: Double): Boolean
 
+@JsFun("() => { try { return globalThis.nuvioQtNativeHost === true || typeof globalThis.nuvioQtPlayNative === 'function'; } catch (_) { return false; } }")
+internal external fun isQtNativePlayerHost(): Boolean
+
 @JsFun("(command, value) => { try { return globalThis.nuvioQtCommandNative?.(command, Number(value || 0)) === true; } catch (_) { return false; } }")
 internal external fun commandQtNativePlayer(command: String, value: Double): Boolean
+
+@JsFun("(command, value) => { try { return globalThis.nuvioQtStringCommandNative?.(command, String(value || '')) === true; } catch (_) { return false; } }")
+internal external fun commandQtNativePlayerString(command: String, value: String): Boolean
+
+@JsFun("(contextJson) => { try { return globalThis.nuvioQtSetPlayerContext?.(contextJson) === true; } catch (_) { return false; } }")
+internal external fun setQtNativePlayerContext(contextJson: String): Boolean
+
+@JsFun("() => { try { return globalThis.nuvioQtConsumePlayerAction?.() || ''; } catch (_) { return ''; } }")
+internal external fun consumeQtNativePlayerAction(): String
+
+@JsFun("() => { try { return globalThis.nuvioQtTakePlayerSnapshot?.() || ''; } catch (_) { return ''; } }")
+internal external fun takeQtNativePlayerSnapshot(): String
+
+@JsFun("() => { try { return globalThis.nuvioQtTakePlayerTracks?.() || ''; } catch (_) { return ''; } }")
+internal external fun takeQtNativePlayerTracks(): String
 
 internal fun webNowEpochMs(): Long = jsNowEpochMs().toLong()
 
