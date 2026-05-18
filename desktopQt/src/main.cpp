@@ -325,12 +325,6 @@ int main(int argc, char *argv[])
     QObject::connect(&playerOverlayController, &PlayerOverlayController::playbackSpeedRequested, &window, [&playerWindow](double speed) {
         if (playerWindow) playerWindow->setPlaybackSpeed(speed);
     });
-    QObject::connect(&playerOverlayController, &PlayerOverlayController::volumeRequested, &window, [&playerWindow](double fraction) {
-        if (playerWindow) playerWindow->setVolumeFraction(fraction);
-    });
-    QObject::connect(&playerOverlayController, &PlayerOverlayController::brightnessRequested, &window, [&playerWindow](double fraction) {
-        if (playerWindow) playerWindow->setBrightnessFraction(fraction);
-    });
     QObject::connect(&playerOverlayController, &PlayerOverlayController::resizeModeRequested, &window, [&playerWindow](int mode) {
         if (playerWindow) playerWindow->setResizeMode(mode);
     });

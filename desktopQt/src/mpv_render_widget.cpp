@@ -146,22 +146,6 @@ void MpvRenderWidget::setPlaybackSpeed(double speed)
     mpv_set_property_async(m_mpv, 0, "speed", MPV_FORMAT_DOUBLE, &value);
 }
 
-void MpvRenderWidget::setVolumeFraction(double fraction)
-{
-    if (!m_mpv) return;
-    double value = qBound(0.0, fraction, 1.0) * 100.0;
-    mpv_set_property_async(m_mpv, 0, "volume", MPV_FORMAT_DOUBLE, &value);
-    int mute = value <= 0.01 ? 1 : 0;
-    mpv_set_property_async(m_mpv, 0, "mute", MPV_FORMAT_FLAG, &mute);
-}
-
-void MpvRenderWidget::setBrightnessFraction(double fraction)
-{
-    if (!m_mpv) return;
-    qint64 value = qRound64((qBound(0.0, fraction, 1.0) - 0.5) * 200.0);
-    mpv_set_property_async(m_mpv, 0, "brightness", MPV_FORMAT_INT64, &value);
-}
-
 void MpvRenderWidget::setResizeMode(int mode)
 {
     if (!m_mpv) return;

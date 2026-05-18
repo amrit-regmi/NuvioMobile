@@ -69,7 +69,6 @@ qt_add_resources(NuvioQtDesktop nuvio_qml_overlay
     FILES
         qml/PlayerOverlay.qml
         qml/icons/ic_arrow_back.svg
-        qml/icons/ic_brightness.svg
         qml/icons/ic_cloud_download.svg
         qml/icons/ic_close.svg
         qml/icons/ic_fast_forward.svg
@@ -89,8 +88,6 @@ qt_add_resources(NuvioQtDesktop nuvio_qml_overlay
         qml/icons/ic_speed.svg
         qml/icons/ic_swap_horiz.svg
         qml/icons/ic_video_library.svg
-        qml/icons/ic_volume_off.svg
-        qml/icons/ic_volume_up.svg
 )
 
 target_link_libraries(NuvioQtDesktop

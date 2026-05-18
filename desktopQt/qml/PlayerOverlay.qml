@@ -13,7 +13,6 @@ Item {
     property bool lockedOverlayVisible: false
     readonly property string iconClose: "qrc:/qml/icons/ic_close.svg"
     readonly property string iconBack: "qrc:/qml/icons/ic_arrow_back.svg"
-    readonly property string iconBrightness: "qrc:/qml/icons/ic_brightness.svg"
     readonly property string iconCloudDownload: "qrc:/qml/icons/ic_cloud_download.svg"
     readonly property string iconFastForward: "qrc:/qml/icons/ic_fast_forward.svg"
     readonly property string iconFastRewind: "qrc:/qml/icons/ic_fast_rewind.svg"
@@ -32,8 +31,6 @@ Item {
     readonly property string iconSpeed: "qrc:/qml/icons/ic_speed.svg"
     readonly property string iconSources: "qrc:/qml/icons/ic_swap_horiz.svg"
     readonly property string iconEpisodes: "qrc:/qml/icons/ic_video_library.svg"
-    readonly property string iconVolume: "qrc:/qml/icons/ic_volume_up.svg"
-    readonly property string iconVolumeMuted: "qrc:/qml/icons/ic_volume_off.svg"
 
     function formatTime(ms) {
         var total = Math.max(0, Math.floor(ms / 1000));
@@ -137,8 +134,6 @@ Item {
         property real pressY: 0
         property real baselinePositionMs: 0
         property real horizontalPreviewMs: 0
-        property real initialVolumeFraction: 1
-        property real initialBrightnessFraction: 0.5
         property string gestureMode: ""
         property bool suppressClick: false
         property bool speedBoostActive: false
@@ -157,8 +152,6 @@ Item {
             pressY = mouse.y;
             baselinePositionMs = Math.max(0, playerOverlay.positionMs);
             horizontalPreviewMs = baselinePositionMs;
-            initialVolumeFraction = playerOverlay.volumeFraction;
-            initialBrightnessFraction = playerOverlay.brightnessFraction;
             gestureMode = "";
             suppressClick = false;
             speedBoostActive = false;
@@ -178,10 +171,6 @@ Item {
                     return;
                 if (absDx > absDy) {
                     gestureMode = "seek";
-                } else if (pressX < root.width * 0.4) {
-                    gestureMode = "brightness";
-                } else if (pressX > root.width * 0.6) {
-                    gestureMode = "volume";
                 } else {
                     return;
                 }
@@ -195,10 +184,6 @@ Item {
                 var target = baselinePositionMs + ((dx / Math.max(1, root.width)) * sensitivitySeconds * 1000);
                 horizontalPreviewMs = duration > 0 ? Math.max(0, Math.min(duration, target)) : Math.max(0, target);
                 playerOverlay.previewHorizontalSeek(horizontalPreviewMs, baselinePositionMs);
-            } else if (gestureMode === "brightness") {
-                playerOverlay.setGestureBrightness(initialBrightnessFraction + (-dy / Math.max(1, root.height)));
-            } else if (gestureMode === "volume") {
-                playerOverlay.setGestureVolume(initialVolumeFraction + (-dy / Math.max(1, root.height)));
             }
         }
         onReleased: function () {
@@ -1171,12 +1156,6 @@ Item {
                 return root.iconFastRewind;
             case "resize":
                 return root.iconResize;
-            case "brightness":
-                return root.iconBrightness;
-            case "volume":
-                return root.iconVolume;
-            case "volumeMuted":
-                return root.iconVolumeMuted;
             case "speed":
                 return root.iconSpeed;
             default:

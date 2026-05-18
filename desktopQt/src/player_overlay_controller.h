@@ -21,8 +21,6 @@ class PlayerOverlayController final : public QObject
     Q_PROPERTY(bool ended READ isEnded NOTIFY playbackChanged)
     Q_PROPERTY(bool openingOverlayVisible READ openingOverlayVisible NOTIFY playbackChanged)
     Q_PROPERTY(double playbackSpeed READ playbackSpeed NOTIFY playbackChanged)
-    Q_PROPERTY(double volumeFraction READ volumeFraction NOTIFY volumeChanged)
-    Q_PROPERTY(double brightnessFraction READ brightnessFraction NOTIFY brightnessChanged)
     Q_PROPERTY(bool holdToSpeedEnabled READ holdToSpeedEnabled NOTIFY playerContextChanged)
     Q_PROPERTY(double holdToSpeedValue READ holdToSpeedValue NOTIFY playerContextChanged)
     Q_PROPERTY(QString speedLabel READ speedLabel NOTIFY playbackChanged)
@@ -94,8 +92,6 @@ public:
     bool isEnded() const { return m_ended; }
     bool openingOverlayVisible() const { return m_showLoadingOverlay && m_loading && !m_initialLoadCompleted; }
     double playbackSpeed() const { return m_playbackSpeed; }
-    double volumeFraction() const { return m_volumeFraction; }
-    double brightnessFraction() const { return m_brightnessFraction; }
     bool holdToSpeedEnabled() const { return m_holdToSpeedEnabled; }
     double holdToSpeedValue() const { return m_holdToSpeedValue; }
     QString speedLabel() const;
@@ -175,8 +171,6 @@ public slots:
     Q_INVOKABLE void clearGestureFeedbackNow();
     Q_INVOKABLE bool beginHoldToSpeed();
     Q_INVOKABLE void endHoldToSpeed();
-    Q_INVOKABLE void setGestureVolume(double fraction);
-    Q_INVOKABLE void setGestureBrightness(double fraction);
     Q_INVOKABLE void cyclePlaybackSpeed();
     Q_INVOKABLE void cycleResizeMode();
     Q_INVOKABLE void toggleLock();
@@ -216,8 +210,6 @@ public slots:
 signals:
     void metadataChanged();
     void playbackChanged();
-    void volumeChanged();
-    void brightnessChanged();
     void resizeModeChanged();
     void controlsVisibleChanged();
     void lockedChanged();
@@ -233,8 +225,6 @@ signals:
     void seekToRequested(qint64 positionMs);
     void seekByRequested(qint64 offsetMs);
     void playbackSpeedRequested(double speed);
-    void volumeRequested(double fraction);
-    void brightnessRequested(double fraction);
     void resizeModeRequested(int mode);
     void audioTrackRequested(int index);
     void subtitleTrackRequested(int index);
@@ -267,8 +257,6 @@ private:
     bool m_initialLoadCompleted = false;
     bool m_showLoadingOverlay = true;
     double m_playbackSpeed = 1.0;
-    double m_volumeFraction = 1.0;
-    double m_brightnessFraction = 0.5;
     bool m_holdToSpeedEnabled = true;
     double m_holdToSpeedValue = 2.0;
     double m_speedBoostRestoreSpeed = -1.0;

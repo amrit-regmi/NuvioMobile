@@ -434,34 +434,6 @@ void PlayerOverlayController::endHoldToSpeed()
     clearGestureFeedback();
 }
 
-void PlayerOverlayController::setGestureVolume(double fraction)
-{
-    const auto clean = qBound(0.0, fraction, 1.0);
-    if (qAbs(m_volumeFraction - clean) > 0.001) {
-        m_volumeFraction = clean;
-        emit volumeChanged();
-        emit volumeRequested(clean);
-    }
-    const auto percent = qRound(clean * 100.0);
-    showGestureFeedback(
-        percent <= 0 ? QStringLiteral("Muted") : QStringLiteral("Volume %1%").arg(percent),
-        percent <= 0 ? QStringLiteral("volumeMuted") : QStringLiteral("volume"),
-        QString(),
-        percent <= 0
-    );
-}
-
-void PlayerOverlayController::setGestureBrightness(double fraction)
-{
-    const auto clean = qBound(0.0, fraction, 1.0);
-    if (qAbs(m_brightnessFraction - clean) > 0.001) {
-        m_brightnessFraction = clean;
-        emit brightnessChanged();
-        emit brightnessRequested(clean);
-    }
-    showGestureFeedback(QStringLiteral("Brightness %1%").arg(qRound(clean * 100.0)), QStringLiteral("brightness"));
-}
-
 void PlayerOverlayController::cyclePlaybackSpeed()
 {
     const QList<double> speeds{1.0, 1.25, 1.5, 2.0};

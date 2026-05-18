@@ -26,8 +26,6 @@ public slots:
     void seekTo(qint64 positionMs);
     void seekBy(qint64 offsetMs);
     void setPlaybackSpeed(double speed);
-    void setVolumeFraction(double fraction);
-    void setBrightnessFraction(double fraction);
     void setResizeMode(int mode);
     void selectAudioTrack(int index);
     void selectSubtitleTrack(int index);
