@@ -31,6 +31,10 @@ object PrivateBackend {
     var host: String = hostOf(baseUrl)
         private set
 
+    /** The built-in (baked) default base URL, ignoring any user override. */
+    val defaultBaseUrl: String
+        get() = normalize(PrivateBackendConfig.FASTAPI_BASE_URL)
+
     /** Canonical built-in Stremio catalog-addon manifest URL served by the backend. */
     val catalogAddonManifestUrl: String
         get() = "$baseUrl/catalog-addon/manifest.json"

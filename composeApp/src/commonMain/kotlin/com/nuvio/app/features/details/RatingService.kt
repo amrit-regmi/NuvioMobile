@@ -32,14 +32,14 @@ object RatingService {
 
     /** Resolves the numeric TMDB id for a meta [id] of [type] (movie/series). */
     suspend fun resolveTmdbId(id: String, type: String): Int? {
-        // Fast path: id already encodes a tmdb id (e.g. "tmdb:movie:550").
-        val direct = id
-            .takeIf { it.startsWith("tmdb:", ignoreCase = true) }
-            ?.substringAfter(':')
-            ?.substringBefore(':')
-            ?.substringBefore('/')
-            ?.toIntOrNull()
-        if (direct != null) return direct
+        // Fast path: id already encodes a tmdb id. Handles both "tmdb:550" and
+        // "tmdb:movie:550" / "tmdb:series:1399" forms by scanning for the numeric segment.
+        if (id.startsWith("tmdb:", ignoreCase = true)) {
+            val direct = id.removePrefix("tmdb:").removePrefix("TMDB:")
+                .split(':', '/')
+                .firstNotNullOfOrNull { it.trim().toIntOrNull() }
+            if (direct != null) return direct
+        }
         val mediaType = if (type.equals("series", true) || type.equals("tv", true)) "tv" else "movie"
         return TmdbService.ensureTmdbId(id, mediaType)?.toIntOrNull()
     }

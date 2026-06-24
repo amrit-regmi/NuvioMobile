@@ -56,6 +56,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.encodeToJsonElement
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 
 private const val PUSH_DEBOUNCE_MS = 1500L
@@ -202,10 +203,34 @@ object ProfileSettingsSync {
     }
 
     private suspend fun pushToRemoteLocked(profileId: Int, blob: MobileProfileSettingsBlob) {
+        // The profile-settings push RPC REPLACES the whole settings_json, and this row is
+        // SHARED with the TV/web app + the built-in provider toggles (streamProvider,
+        // useBuiltinSubtitles, theme, ...). Read-merge-write so we only overwrite the mobile
+        // blob's own top-level keys (version/features) and preserve every sibling key.
+        val mobileBlobJson = json
+            .encodeToJsonElement(MobileProfileSettingsBlob.serializer(), blob)
+            .jsonObject
+        val existing = runCatching {
+            val pullParams = buildJsonObject {
+                put("p_profile_id", profileId)
+                put("p_platform", MOBILE_SYNC_PLATFORM)
+            }
+            SupabaseProvider.client.postgrest
+                .rpc("sync_pull_profile_settings_blob", pullParams)
+                .decodeList<SettingsBlobResponse>()
+                .firstOrNull()
+                ?.settingsJson
+        }.getOrNull()
+
+        val merged = buildJsonObject {
+            existing?.forEach { (key, value) -> put(key, value) }
+            mobileBlobJson.forEach { (key, value) -> put(key, value) }
+        }
+
         val params = buildJsonObject {
             put("p_profile_id", profileId)
             put("p_platform", MOBILE_SYNC_PLATFORM)
-            put("p_settings_json", json.encodeToJsonElement(MobileProfileSettingsBlob.serializer(), blob))
+            put("p_settings_json", merged)
         }
         SupabaseProvider.client.postgrest.rpc("sync_push_profile_settings_blob", params)
         log.d { "pushToRemoteLocked(profileId=$profileId) — success" }

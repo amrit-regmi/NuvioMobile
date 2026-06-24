@@ -255,7 +255,9 @@ object HomeCatalogSettingsRepository {
         useRecommendations = enabled
         publish()
         persist()
-        HomeRepository.applyCurrentSettings()
+        // Re-fetch reco rows when turning ON (they were cleared when turned OFF); when OFF,
+        // refreshRecommendations clears the cached reco rows. Either way it republishes Home.
+        HomeRepository.refreshRecommendations(force = true)
     }
 
     fun setHeroSourceEnabled(key: String, enabled: Boolean) {

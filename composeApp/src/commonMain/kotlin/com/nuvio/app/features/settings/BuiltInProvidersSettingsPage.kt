@@ -112,9 +112,12 @@ internal fun LazyListScope.builtInProvidersSettingsContent(isTablet: Boolean) {
     // ── Advanced (backend URL) ─────────────────────────────────────────────────
     item {
         var showBackendDialog by rememberSaveable { mutableStateOf(false) }
+        // showLogoutPrompt = persistent inline banner; showLogoutDialog = the one-shot modal.
         var showLogoutPrompt by rememberSaveable { mutableStateOf(false) }
-        // Effective backend URL (override or baked default).
-        val currentUrl = remember { PrivateBackend.baseUrl }
+        var showLogoutDialog by rememberSaveable { mutableStateOf(false) }
+        // The pending/effective backend URL. PrivateBackend.baseUrl only reflects the
+        // override after the next launch, so track the just-saved value locally to display.
+        var currentUrl by rememberSaveable { mutableStateOf(PrivateBackend.baseUrl) }
 
         SettingsSection(
             title = stringResource(Res.string.settings_builtin_advanced_section),
@@ -149,17 +152,21 @@ internal fun LazyListScope.builtInProvidersSettingsContent(isTablet: Boolean) {
                 onSave = { newUrl ->
                     // Persist for the next launch; do NOT hot-swap (mirrors NuvioTV).
                     PrivateBackend.setOverride(newUrl)
+                    // Reflect the saved value immediately (override, or baked default on reset).
+                    currentUrl = newUrl ?: PrivateBackend.defaultBaseUrl
                     showBackendDialog = false
                     showLogoutPrompt = true
+                    showLogoutDialog = true
                 },
                 onDismiss = { showBackendDialog = false },
             )
         }
 
-        if (showLogoutPrompt) {
+        if (showLogoutDialog) {
             BackendChangedLogoutDialog(
-                onConfirm = { showLogoutPrompt = false },
-                onDismiss = { /* keep banner; user can log out later */ },
+                // Dismissing keeps the pending banner; the user can log out later.
+                onConfirm = { showLogoutDialog = false; showLogoutPrompt = false },
+                onDismiss = { showLogoutDialog = false },
             )
         }
     }

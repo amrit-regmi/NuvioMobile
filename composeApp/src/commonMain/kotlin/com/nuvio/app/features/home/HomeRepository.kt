@@ -37,8 +37,12 @@ object HomeRepository {
     private var activeRequestKey: String? = null
     private var lastRequestKey: String? = null
     private var currentDefinitions: List<HomeCatalogDefinition> = emptyList()
+    // Reco state is written from a Dispatchers.Default coroutine and read by
+    // publishCurrentState (which can run on the main thread) — keep it visible across threads.
+    @kotlin.concurrent.Volatile
     private var recoDefinitions: List<HomeCatalogDefinition> = emptyList()
     private var cachedSections: Map<String, HomeCatalogSection> = emptyMap()
+    @kotlin.concurrent.Volatile
     private var cachedRecoSections: Map<String, HomeCatalogSection> = emptyMap()
     private var cachedCollectionHeroItems: List<MetaPreview> = emptyList()
     private var collectionHeroJob: Job? = null
