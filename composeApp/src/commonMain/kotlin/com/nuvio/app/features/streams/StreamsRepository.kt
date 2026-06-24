@@ -155,9 +155,15 @@ object StreamsRepository {
         }
 
         // Private-backend fork: streams come from OUR backend's catalog-addon
-        // (Stremio `/stream/*`), not arbitrary installed Stremio addons.
-        val installedAddons = com.nuvio.app.core.content.ContentSourceProvider.cachedContentAddons
-            .enabledAddons()
+        // (Stremio `/stream/*`), not arbitrary installed Stremio addons. The stream-provider
+        // master toggle (shared with TV via `nuvio_profile_settings.streamProvider`) gates it.
+        val installedAddons = if (
+            com.nuvio.app.features.settings.BuiltInProvidersSettingsRepository.isStreamProviderEnabled()
+        ) {
+            com.nuvio.app.core.content.ContentSourceProvider.cachedContentAddons.enabledAddons()
+        } else {
+            emptyList()
+        }
         val pluginScrapers = if (AppFeaturePolicy.pluginsEnabled) {
             PluginRepository.getEnabledScrapersForType(type)
         } else {

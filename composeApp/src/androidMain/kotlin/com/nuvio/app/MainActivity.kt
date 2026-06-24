@@ -91,6 +91,7 @@ class MainActivity : AppCompatActivity() {
         SeasonViewModeStorage.initialize(applicationContext)
         PosterCardStyleStorage.initialize(applicationContext)
         DebridSettingsStorage.initialize(applicationContext)
+        com.nuvio.app.features.settings.BuiltInProvidersStorage.initialize(applicationContext)
         TmdbSettingsStorage.initialize(applicationContext)
         MdbListSettingsStorage.initialize(applicationContext)
         TraktAuthStorage.initialize(applicationContext)

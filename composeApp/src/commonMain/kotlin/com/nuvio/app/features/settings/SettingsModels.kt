@@ -32,6 +32,7 @@ import nuvio.composeapp.generated.resources.compose_settings_page_supporters_con
 import nuvio.composeapp.generated.resources.compose_settings_page_tmdb_enrichment
 import nuvio.composeapp.generated.resources.compose_settings_page_trakt
 import nuvio.composeapp.generated.resources.settings_account
+import nuvio.composeapp.generated.resources.settings_page_builtin_providers
 import org.jetbrains.compose.resources.StringResource
 
 internal enum class SettingsCategory(
@@ -152,6 +153,11 @@ internal enum class SettingsPage(
     TraktAuthentication(
         titleRes = Res.string.compose_settings_page_trakt,
         category = SettingsCategory.Account,
+        parentPage = Root,
+    ),
+    BuiltInProviders(
+        titleRes = Res.string.settings_page_builtin_providers,
+        category = SettingsCategory.General,
         parentPage = Root,
     ),
 }

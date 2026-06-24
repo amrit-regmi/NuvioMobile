@@ -74,6 +74,11 @@ object SyncManager {
                 runCatching { HomeCatalogSettingsSyncService.pullFromServer(profileId) }
                     .onFailure { log.e(it) { "HomeCatalogSettings pull failed" } }
             }
+            launch {
+                runCatching {
+                    com.nuvio.app.features.settings.BuiltInProvidersSettingsSyncService.pullFromServer(profileId)
+                }.onFailure { log.e(it) { "BuiltInProviders pull failed" } }
+            }
 
             log.i { "pullAllForProfile($profileId) — all pulls launched" }
         }
@@ -122,6 +127,12 @@ object SyncManager {
             launch {
                 runCatching { HomeCatalogSettingsSyncService.pullFromServer(profileId) }
                     .onFailure { log.e(it) { "Foreground home catalog settings pull failed" } }
+            }
+
+            launch {
+                runCatching {
+                    com.nuvio.app.features.settings.BuiltInProvidersSettingsSyncService.pullFromServer(profileId)
+                }.onFailure { log.e(it) { "Foreground built-in providers pull failed" } }
             }
         }
     }

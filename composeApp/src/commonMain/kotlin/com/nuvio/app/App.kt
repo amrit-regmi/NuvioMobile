@@ -693,6 +693,10 @@ private fun MainAppContent(
         remember {
             ProfileSettingsSync.startObserving()
         }
+        remember {
+            // Load the built-in provider toggles (stream/subtitle) so gating reads are warm.
+            com.nuvio.app.features.settings.BuiltInProvidersSettingsRepository.ensureLoaded()
+        }
         val hapticFeedback = LocalHapticFeedback.current
         val focusManager = LocalFocusManager.current
         val coroutineScope = rememberCoroutineScope()

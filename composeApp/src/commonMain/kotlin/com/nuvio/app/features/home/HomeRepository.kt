@@ -33,10 +33,13 @@ object HomeRepository {
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
 
     private var activeJob: Job? = null
+    private var recoJob: Job? = null
     private var activeRequestKey: String? = null
     private var lastRequestKey: String? = null
     private var currentDefinitions: List<HomeCatalogDefinition> = emptyList()
+    private var recoDefinitions: List<HomeCatalogDefinition> = emptyList()
     private var cachedSections: Map<String, HomeCatalogSection> = emptyMap()
+    private var cachedRecoSections: Map<String, HomeCatalogSection> = emptyMap()
     private var cachedCollectionHeroItems: List<MetaPreview> = emptyList()
     private var collectionHeroJob: Job? = null
     private var collectionHeroRequestKey: String? = null
@@ -44,6 +47,7 @@ object HomeRepository {
     private var lastErrorMessage: String? = null
 
     fun refresh(addons: List<ManagedAddon>, force: Boolean = false) {
+        refreshRecommendations(force = force)
         val activeAddons = addons.enabledAddons()
         val requests = buildHomeCatalogDefinitions(activeAddons)
         currentDefinitions = requests
@@ -146,6 +150,69 @@ object HomeRepository {
         }
     }
 
+    /**
+     * Fetches personalized recommendation rows from `/reco` and merges them into the home
+     * as reco sections + reco catalog definitions, but ONLY when the recommendations master
+     * toggle is on. When off, reco rows are cleared. Mirrors NuvioTV's reco pipeline gating.
+     */
+    fun refreshRecommendations(force: Boolean = false) {
+        val recommendationsEnabled = HomeCatalogSettingsRepository.snapshot().useRecommendations
+        if (!recommendationsEnabled) {
+            if (recoDefinitions.isNotEmpty() || cachedRecoSections.isNotEmpty()) {
+                recoJob?.cancel()
+                recoDefinitions = emptyList()
+                cachedRecoSections = emptyMap()
+                HomeCatalogSettingsRepository.syncRecoRows(emptyList())
+                publishCurrentState(isLoading = _uiState.value.isLoading, requestKey = activeRequestKey ?: lastRequestKey)
+            }
+            return
+        }
+        if (!force && recoJob?.isActive == true) return
+        recoJob?.cancel()
+        recoJob = scope.launch {
+            val rows = RecommendationService.fetchRows()
+            if (rows.isEmpty()) {
+                recoDefinitions = emptyList()
+                cachedRecoSections = emptyMap()
+                HomeCatalogSettingsRepository.syncRecoRows(emptyList())
+                publishCurrentState(isLoading = _uiState.value.isLoading, requestKey = activeRequestKey ?: lastRequestKey)
+                return@launch
+            }
+            recoDefinitions = rows.map { row ->
+                HomeCatalogDefinition(
+                    key = row.key,
+                    defaultTitle = row.label,
+                    addonName = RECO_ADDON_ID,
+                    manifestUrl = "",
+                    type = row.contentType ?: "movie",
+                    catalogId = row.reasonType,
+                    supportsPagination = false,
+                    isReco = true,
+                )
+            }
+            cachedRecoSections = rows.associate { row ->
+                row.key to HomeCatalogSection(
+                    key = row.key,
+                    title = row.label,
+                    subtitle = RECO_ADDON_ID,
+                    addonName = RECO_ADDON_ID,
+                    target = CatalogTarget.Addon(
+                        manifestUrl = "",
+                        contentType = row.contentType ?: "movie",
+                        catalogId = row.reasonType,
+                        supportsPagination = false,
+                    ),
+                    items = row.items,
+                    availableItemCount = row.items.size,
+                    hasMore = false,
+                )
+            }
+            // Register reco rows with the settings repo so they appear in the home ordering
+            // (this triggers applyCurrentSettings → publishCurrentState).
+            HomeCatalogSettingsRepository.syncRecoRows(rows)
+        }
+    }
+
     fun applyCurrentSettings() {
         publishCurrentState(
             isLoading = _uiState.value.isLoading,
@@ -161,10 +228,14 @@ object HomeRepository {
     fun clear() {
         activeJob?.cancel()
         activeJob = null
+        recoJob?.cancel()
+        recoJob = null
         activeRequestKey = null
         lastRequestKey = null
         currentDefinitions = emptyList()
+        recoDefinitions = emptyList()
         cachedSections = emptyMap()
+        cachedRecoSections = emptyMap()
         cachedCollectionHeroItems = emptyList()
         collectionHeroJob?.cancel()
         collectionHeroJob = null
@@ -184,13 +255,23 @@ object HomeRepository {
         fun HomeCatalogSection.withReleaseFilter(): HomeCatalogSection =
             if (todayIsoDate == null) this else filterReleasedItems(todayIsoDate)
 
-        val sections = currentDefinitions
+        // Built-in catalog provider master toggle: when off, the backend catalog-addon's
+        // catalog rows are suppressed (mirrors the TV app's `useBuiltinCatalog` gate).
+        // Reco rows are gated separately by `useRecommendations` (recoDefinitions is empty
+        // when that toggle is off). Reco rows survive even when the catalog toggle is off.
+        val builtinDefinitions = if (snapshot.useBuiltinCatalog) currentDefinitions else emptyList()
+        val recommendationsEnabled = snapshot.useRecommendations
+        val activeRecoDefinitions = if (recommendationsEnabled) recoDefinitions else emptyList()
+        val allDefinitions = builtinDefinitions + activeRecoDefinitions
+        val sectionLookup = cachedSections + cachedRecoSections
+
+        val sections = allDefinitions
             .sortedBy { definition -> preferences[definition.key]?.order ?: Int.MAX_VALUE }
             .mapNotNull { definition ->
                 val preference = preferences[definition.key]
                 if (preference?.enabled == false) return@mapNotNull null
 
-                val section = cachedSections[definition.key]?.withReleaseFilter() ?: return@mapNotNull null
+                val section = sectionLookup[definition.key]?.withReleaseFilter() ?: return@mapNotNull null
                 if (section.items.isEmpty()) return@mapNotNull null
                 val customTitle = preference?.customTitle.orEmpty()
                 section.copy(

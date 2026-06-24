@@ -165,6 +165,7 @@ object ProfileRepository {
         StreamBadgeSettingsRepository.onProfileChanged()
         P2pSettingsRepository.onProfileChanged()
         HomeCatalogSettingsRepository.onProfileChanged()
+        com.nuvio.app.features.settings.BuiltInProvidersSettingsRepository.onProfileChanged()
         HomeRepository.clear()
         MetaScreenSettingsRepository.onProfileChanged()
         ContinueWatchingPreferencesRepository.onProfileChanged()

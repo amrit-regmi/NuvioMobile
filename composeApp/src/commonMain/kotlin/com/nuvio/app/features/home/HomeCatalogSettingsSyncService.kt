@@ -46,6 +46,13 @@ data class SyncHomeCatalogPayload(
     @SerialName("hide_unreleased_content") val hideUnreleasedContent: Boolean = false,
     @SerialName("hide_catalog_underline") val hideCatalogUnderline: Boolean = false,
     val items: List<SyncCatalogItem> = emptyList(),
+    // Cross-platform master toggles SHARED with the TV app. The TV app reads/writes
+    // `useBuiltinCatalog` + `useRecommendations` on this same `nuvio_home_catalog_settings`
+    // row (platform `home_catalog_shared`), so keeping the exact JSON key names here means a
+    // user's catalog/reco toggles stay consistent across TV + mobile. Null = "key absent on
+    // the remote row" so we never clobber the TV-written value with a local default.
+    @SerialName("useBuiltinCatalog") val useBuiltinCatalog: Boolean? = null,
+    @SerialName("useRecommendations") val useRecommendations: Boolean? = null,
 )
 
 @Serializable
@@ -61,6 +68,8 @@ private data class RemoteHomeCatalogSettings(
     val updatedAt: String?,
     val hasHideUnreleasedContent: Boolean,
     val hasHideCatalogUnderline: Boolean,
+    val hasUseBuiltinCatalog: Boolean,
+    val hasUseRecommendations: Boolean,
 )
 
 private data class PullToken(
@@ -90,6 +99,8 @@ object HomeCatalogSettingsSyncService {
     private const val PUSH_DEBOUNCE_MS = 1500L
     private const val HIDE_UNRELEASED_CONTENT_KEY = "hide_unreleased_content"
     private const val HIDE_CATALOG_UNDERLINE_KEY = "hide_catalog_underline"
+    private const val USE_BUILTIN_CATALOG_KEY = "useBuiltinCatalog"
+    private const val USE_RECOMMENDATIONS_KEY = "useRecommendations"
 
     @Volatile
     var isSyncingFromRemote: Boolean = false
@@ -283,6 +294,8 @@ object HomeCatalogSettingsSyncService {
             updatedAt = blob.updatedAt,
             hasHideUnreleasedContent = blob.settingsJson.containsKey(HIDE_UNRELEASED_CONTENT_KEY),
             hasHideCatalogUnderline = blob.settingsJson.containsKey(HIDE_CATALOG_UNDERLINE_KEY),
+            hasUseBuiltinCatalog = blob.settingsJson.containsKey(USE_BUILTIN_CATALOG_KEY),
+            hasUseRecommendations = blob.settingsJson.containsKey(USE_RECOMMENDATIONS_KEY),
         )
     }
 
@@ -295,6 +308,12 @@ object HomeCatalogSettingsSyncService {
         val hideUnderlineSource = rows
             .filter { it.hasHideCatalogUnderline }
             .maxByOrNull { it.updatedAt.orEmpty() }
+        val useBuiltinCatalogSource = rows
+            .filter { it.hasUseBuiltinCatalog }
+            .maxByOrNull { it.updatedAt.orEmpty() }
+        val useRecommendationsSource = rows
+            .filter { it.hasUseRecommendations }
+            .maxByOrNull { it.updatedAt.orEmpty() }
 
         return copy(
             payload = payload.copy(
@@ -302,6 +321,10 @@ object HomeCatalogSettingsSyncService {
                     ?: payload.hideUnreleasedContent,
                 hideCatalogUnderline = hideUnderlineSource?.payload?.hideCatalogUnderline
                     ?: payload.hideCatalogUnderline,
+                useBuiltinCatalog = useBuiltinCatalogSource?.payload?.useBuiltinCatalog
+                    ?: payload.useBuiltinCatalog,
+                useRecommendations = useRecommendationsSource?.payload?.useRecommendations
+                    ?: payload.useRecommendations,
             ),
         )
     }
@@ -333,6 +356,17 @@ object HomeCatalogSettingsSyncService {
                 decoded.hideCatalogUnderline
             } else {
                 localPayload.hideCatalogUnderline
+            },
+            // Preserve the TV-shared master toggles only when actually present remotely.
+            useBuiltinCatalog = if (settingsJson.containsKey(USE_BUILTIN_CATALOG_KEY)) {
+                decoded.useBuiltinCatalog
+            } else {
+                localPayload.useBuiltinCatalog
+            },
+            useRecommendations = if (settingsJson.containsKey(USE_RECOMMENDATIONS_KEY)) {
+                decoded.useRecommendations
+            } else {
+                localPayload.useRecommendations
             },
         )
     }.getOrNull()

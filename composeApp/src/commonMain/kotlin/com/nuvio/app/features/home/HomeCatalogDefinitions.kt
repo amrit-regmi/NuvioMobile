@@ -17,6 +17,8 @@ data class HomeCatalogDefinition(
     val type: String,
     val catalogId: String,
     val supportsPagination: Boolean,
+    /** True for personalized recommendation rows served by `/reco`, not the catalog-addon. */
+    val isReco: Boolean = false,
 )
 
 fun buildHomeCatalogDefinitions(addons: List<ManagedAddon>): List<HomeCatalogDefinition> =

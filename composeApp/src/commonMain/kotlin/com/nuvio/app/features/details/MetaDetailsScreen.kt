@@ -69,6 +69,7 @@ import com.nuvio.app.core.ui.NuvioBackButton
 import com.nuvio.app.core.ui.TraktListPickerDialog
 import com.nuvio.app.core.ui.nuvioSafeBottomPadding
 import com.nuvio.app.features.details.components.DetailActionButtons
+import com.nuvio.app.features.details.components.DetailRatingControl
 import com.nuvio.app.features.details.components.DetailSecondaryAction
 import com.nuvio.app.features.details.components.CommentDetailSheet
 import com.nuvio.app.features.details.components.DetailAdditionalInfoSection
@@ -1559,6 +1560,9 @@ private fun ConfiguredMetaSections(
     fun RenderSection(key: MetaScreenSectionKey, showHeader: Boolean = true) {
         when (key) {
             MetaScreenSectionKey.ACTIONS -> {
+              androidx.compose.foundation.layout.Column(
+                  verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(12.dp),
+              ) {
                 DetailActionButtons(
                     playLabel = playButtonLabel,
                     secondaryActions = listOf(
@@ -1596,6 +1600,9 @@ private fun ConfiguredMetaSections(
                     onPlayClick = onPrimaryPlayClick,
                     onPlayLongClick = if (showManualPlayOption) onPrimaryPlayLongClick else null,
                 )
+                // Rate-a-title control: feeds reco bootstrapping via OUR backend /ratings.
+                DetailRatingControl(meta = meta, isTablet = isTablet)
+              }
             }
             MetaScreenSectionKey.OVERVIEW -> {
                 DetailMetaInfo(meta = meta)

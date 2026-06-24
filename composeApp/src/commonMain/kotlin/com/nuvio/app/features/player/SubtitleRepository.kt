@@ -51,7 +51,20 @@ object SubtitleRepository {
             _error.value = null
             _addonSubtitles.value = emptyList()
 
-            val addons = AddonRepository.uiState.value.addons.enabledAddons()
+            // Private-backend fork: subtitles come from OUR backend's catalog-addon
+            // (`subtitles` resource), not arbitrary installed Stremio addons. The subtitle
+            // provider toggle (shared profile setting) gates whether we fetch them at all.
+            val subtitleProviderEnabled =
+                com.nuvio.app.features.settings.BuiltInProvidersSettingsRepository.isSubtitleProviderEnabled()
+            val contentAddons = com.nuvio.app.core.content.ContentSourceProvider
+                .cachedContentAddons.enabledAddons()
+            val installedAddons = AddonRepository.uiState.value.addons.enabledAddons()
+            // Merge backend content addons (when enabled) with any other installed subtitle
+            // addons, de-duplicating by manifest transport URL.
+            val addons = buildList {
+                if (subtitleProviderEnabled) addAll(contentAddons)
+                addAll(installedAddons)
+            }.distinctBy { it.manifest?.transportUrl ?: it.manifestUrl }
             val allSubs = mutableListOf<AddonSubtitle>()
 
             for (addon in addons) {
@@ -100,8 +113,30 @@ object SubtitleRepository {
                 }
             }
 
-            _addonSubtitles.value = allSubs
-            if (allSubs.isEmpty() && addons.any { it.manifest?.resources?.any { r -> r.name.isSubtitleResourceName() } == true }) {
+            // Respect the preferred-subtitle-language setting: surface matching languages
+            // first, then everything else (mirrors NuvioTV's preferred-language ordering).
+            val preferredLanguage = normalizeLanguageCode(
+                PlayerSettingsRepository.uiState.value.preferredSubtitleLanguage,
+            )?.takeIf { it != SubtitleLanguageOption.NONE && it != SubtitleLanguageOption.FORCED }
+            val secondaryLanguage = PlayerSettingsRepository.uiState.value.secondaryPreferredSubtitleLanguage
+                ?.let { normalizeLanguageCode(it) }
+                ?.takeIf { it != SubtitleLanguageOption.NONE && it != SubtitleLanguageOption.FORCED }
+            val orderedSubs = if (preferredLanguage == null && secondaryLanguage == null) {
+                allSubs.distinctBy { "${it.language}|${it.url}" }
+            } else {
+                allSubs
+                    .distinctBy { "${it.language}|${it.url}" }
+                    .sortedBy { sub ->
+                        when (sub.language) {
+                            preferredLanguage -> 0
+                            secondaryLanguage -> 1
+                            else -> 2
+                        }
+                    }
+            }
+
+            _addonSubtitles.value = orderedSubs
+            if (orderedSubs.isEmpty() && addons.any { it.manifest?.resources?.any { r -> r.name.isSubtitleResourceName() } == true }) {
                 _error.value = getString(Res.string.compose_player_no_subtitles_found)
             }
             _isLoading.value = false

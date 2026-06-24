@@ -524,6 +524,7 @@ private fun MobileSettingsScreen(
                             onNotificationsClick = { onPageChange(SettingsPage.Notifications) },
                             onContentDiscoveryClick = { onPageChange(SettingsPage.ContentDiscovery) },
                             onIntegrationsClick = { onPageChange(SettingsPage.Integrations) },
+                            onBuiltInProvidersClick = { onPageChange(SettingsPage.BuiltInProviders) },
                             onTraktClick = { onPageChange(SettingsPage.TraktAuthentication) },
                             onSupportersContributorsClick = onSupportersContributorsClick,
                             onLicensesAttributionsClick = onLicensesAttributionsClick,
@@ -534,6 +535,9 @@ private fun MobileSettingsScreen(
                         )
                     }
                 }
+                SettingsPage.BuiltInProviders -> builtInProvidersSettingsContent(
+                    isTablet = false,
+                )
                 SettingsPage.Account -> accountSettingsContent(
                     isTablet = false,
                 )
@@ -913,6 +917,7 @@ private fun TabletSettingsScreen(
                                 onNotificationsClick = { openInlinePage(SettingsPage.Notifications) },
                                 onContentDiscoveryClick = { openInlinePage(SettingsPage.ContentDiscovery) },
                                 onIntegrationsClick = { openInlinePage(SettingsPage.Integrations) },
+                                onBuiltInProvidersClick = { openInlinePage(SettingsPage.BuiltInProviders) },
                                 onTraktClick = { openInlinePage(SettingsPage.TraktAuthentication) },
                                 onSupportersContributorsClick = { openInlinePage(SettingsPage.SupportersContributors) },
                                 onLicensesAttributionsClick = { openInlinePage(SettingsPage.LicensesAttributions) },
@@ -927,6 +932,9 @@ private fun TabletSettingsScreen(
                             )
                         }
                     }
+                    SettingsPage.BuiltInProviders -> builtInProvidersSettingsContent(
+                        isTablet = true,
+                    )
                     SettingsPage.Account -> accountSettingsContent(
                         isTablet = true,
                     )

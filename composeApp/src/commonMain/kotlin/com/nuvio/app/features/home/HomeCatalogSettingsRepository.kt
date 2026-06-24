@@ -25,6 +25,7 @@ data class HomeCatalogSettingsItem(
     val isCollection: Boolean = false,
     val collectionId: String? = null,
     val isPinnedToTop: Boolean = false,
+    val isReco: Boolean = false,
 ) {
     val displayTitle: String
         get() = customTitle.ifBlank { defaultTitle }
@@ -34,6 +35,9 @@ data class HomeCatalogSettingsUiState(
     val heroEnabled: Boolean = true,
     val hideUnreleasedContent: Boolean = false,
     val hideCatalogUnderline: Boolean = false,
+    // Cross-platform master toggles (shared with TV via `nuvio_home_catalog_settings`).
+    val useBuiltinCatalog: Boolean = true,
+    val useRecommendations: Boolean = true,
     val items: List<HomeCatalogSettingsItem> = emptyList(),
 ) {
     val signature: String
@@ -43,6 +47,10 @@ data class HomeCatalogSettingsUiState(
             append(hideUnreleasedContent)
             append('|')
             append(hideCatalogUnderline)
+            append('|')
+            append(useBuiltinCatalog)
+            append('|')
+            append(useRecommendations)
             append('|')
             append(
                 items.joinToString(separator = "|") { item ->
@@ -63,6 +71,8 @@ internal data class HomeCatalogSettingsSnapshot(
     val heroEnabled: Boolean,
     val hideUnreleasedContent: Boolean,
     val hideCatalogUnderline: Boolean,
+    val useBuiltinCatalog: Boolean,
+    val useRecommendations: Boolean,
     val preferences: Map<String, HomeCatalogPreference>,
 )
 
@@ -80,6 +90,8 @@ private data class StoredHomeCatalogSettingsPayload(
     val heroEnabled: Boolean = true,
     val hideUnreleasedContent: Boolean = false,
     val hideCatalogUnderline: Boolean = false,
+    val useBuiltinCatalog: Boolean = true,
+    val useRecommendations: Boolean = true,
     val items: List<StoredHomeCatalogPreference> = emptyList(),
 )
 
@@ -96,11 +108,14 @@ object HomeCatalogSettingsRepository {
 
     private var hasLoaded = false
     private var definitions: List<HomeCatalogDefinition> = emptyList()
+    private var recoDefinitions: List<HomeCatalogDefinition> = emptyList()
     private var collectionDefinitions: List<CollectionCatalogDefinition> = emptyList()
     private var preferences: MutableMap<String, StoredHomeCatalogPreference> = mutableMapOf()
     private var heroEnabled = true
     private var hideUnreleasedContent = false
     private var hideCatalogUnderline = false
+    private var useBuiltinCatalog = true
+    private var useRecommendations = true
 
     fun onProfileChanged() {
         hasLoaded = false
@@ -108,7 +123,10 @@ object HomeCatalogSettingsRepository {
         heroEnabled = true
         hideUnreleasedContent = false
         hideCatalogUnderline = false
+        useBuiltinCatalog = true
+        useRecommendations = true
         definitions = emptyList()
+        recoDefinitions = emptyList()
         collectionDefinitions = emptyList()
         _uiState.value = HomeCatalogSettingsUiState()
     }
@@ -121,6 +139,8 @@ object HomeCatalogSettingsRepository {
         heroEnabled = true
         hideUnreleasedContent = false
         hideCatalogUnderline = false
+        useBuiltinCatalog = true
+        useRecommendations = true
         _uiState.value = HomeCatalogSettingsUiState()
     }
 
@@ -128,7 +148,7 @@ object HomeCatalogSettingsRepository {
         ensureLoaded()
         definitions = buildHomeCatalogDefinitions(addons)
         collectionDefinitions = buildCollectionDefinitions(CollectionRepository.collections.value)
-        if (definitions.isEmpty() && collectionDefinitions.isEmpty()) {
+        if (definitions.isEmpty() && recoDefinitions.isEmpty() && collectionDefinitions.isEmpty()) {
             publish()
             return
         }
@@ -136,6 +156,32 @@ object HomeCatalogSettingsRepository {
         enforcePinnedCollectionsAtTop()
         publish()
         persist()
+    }
+
+    /**
+     * Registers the personalized recommendation rows (from `/reco`) so they appear in the
+     * home catalog ordering alongside built-in catalog + collection rows. Reco rows are
+     * never used as hero sources. Mirrors NuvioTV's reco-row merge into `rowOrder`.
+     */
+    fun syncRecoRows(recoRows: List<RecoRow>) {
+        ensureLoaded()
+        recoDefinitions = recoRows.map { row ->
+            HomeCatalogDefinition(
+                key = row.key,
+                defaultTitle = row.label,
+                addonName = RECO_ADDON_ID,
+                manifestUrl = "",
+                type = row.contentType ?: "movie",
+                catalogId = row.reasonType,
+                supportsPagination = false,
+                isReco = true,
+            )
+        }
+        normalizePreferences()
+        enforcePinnedCollectionsAtTop()
+        publish()
+        persist()
+        HomeRepository.applyCurrentSettings()
     }
 
     fun syncCollections(collections: List<Collection>) {
@@ -154,6 +200,8 @@ object HomeCatalogSettingsRepository {
             heroEnabled = heroEnabled,
             hideUnreleasedContent = hideUnreleasedContent,
             hideCatalogUnderline = hideCatalogUnderline,
+            useBuiltinCatalog = useBuiltinCatalog,
+            useRecommendations = useRecommendations,
             preferences = preferences.mapValues { (_, value) ->
                 HomeCatalogPreference(
                     customTitle = value.customTitle,
@@ -190,6 +238,26 @@ object HomeCatalogSettingsRepository {
         persist()
     }
 
+    /** Built-in catalog provider master toggle (gates the catalog rows + meta/enrichment). */
+    fun setUseBuiltinCatalog(enabled: Boolean) {
+        ensureLoaded()
+        if (useBuiltinCatalog == enabled) return
+        useBuiltinCatalog = enabled
+        publish()
+        persist()
+        HomeRepository.applyCurrentSettings()
+    }
+
+    /** Recommendations master toggle (gates the personalized reco rows). */
+    fun setUseRecommendations(enabled: Boolean) {
+        ensureLoaded()
+        if (useRecommendations == enabled) return
+        useRecommendations = enabled
+        publish()
+        persist()
+        HomeRepository.applyCurrentSettings()
+    }
+
     fun setHeroSourceEnabled(key: String, enabled: Boolean) {
         updatePreference(key) { preference ->
             if (!enabled) {
@@ -219,6 +287,8 @@ object HomeCatalogSettingsRepository {
         heroEnabled = true
         hideUnreleasedContent = false
         hideCatalogUnderline = false
+        useBuiltinCatalog = true
+        useRecommendations = true
         preferences.clear()
         normalizePreferences()
         publish()
@@ -266,6 +336,8 @@ object HomeCatalogSettingsRepository {
             heroEnabled = parsedPayload.heroEnabled
             hideUnreleasedContent = parsedPayload.hideUnreleasedContent
             hideCatalogUnderline = parsedPayload.hideCatalogUnderline
+            useBuiltinCatalog = parsedPayload.useBuiltinCatalog
+            useRecommendations = parsedPayload.useRecommendations
             preferences = parsedPayload.items.associateBy { it.key }.toMutableMap()
             publish()
             return
@@ -281,10 +353,11 @@ object HomeCatalogSettingsRepository {
 
     private fun normalizePreferences() {
         val current = preferences
-        data class UnifiedEntry(val key: String, val isCollection: Boolean)
+        data class UnifiedEntry(val key: String, val isCollection: Boolean, val isReco: Boolean = false)
         val catalogEntries = definitions.map { UnifiedEntry(it.key, false) }
+        val recoEntries = recoDefinitions.map { UnifiedEntry(it.key, false, isReco = true) }
         val collectionEntries = collectionDefinitions.map { UnifiedEntry(it.key, true) }
-        val allEntries = catalogEntries + collectionEntries
+        val allEntries = catalogEntries + recoEntries + collectionEntries
         val knownKeys = allEntries.mapTo(linkedSetOf(), UnifiedEntry::key)
         var nextOrder = (current.values.maxOfOrNull(StoredHomeCatalogPreference::order) ?: -1) + 1
 
@@ -307,7 +380,7 @@ object HomeCatalogSettingsRepository {
         var enabledHeroSourceCount = 0
         orderedEntries.forEach { entry ->
             val stored = current[entry.key]
-            val heroSourceEnabled = if (entry.isCollection) {
+            val heroSourceEnabled = if (entry.isCollection || entry.isReco) {
                 false
             } else {
                 (stored?.heroSourceEnabled ?: true) &&
@@ -329,7 +402,7 @@ object HomeCatalogSettingsRepository {
 
     private fun publish() {
         val collectionMap = collectionDefinitions.associateBy { it.key }
-        val catalogItems = definitions
+        val catalogItems = (definitions + recoDefinitions)
             .map { definition ->
                 val preference = preferences[definition.key]
                 HomeCatalogSettingsItem(
@@ -338,8 +411,9 @@ object HomeCatalogSettingsRepository {
                     addonName = definition.addonName,
                     customTitle = preference?.customTitle.orEmpty(),
                     enabled = preference?.enabled ?: true,
-                    heroSourceEnabled = preference?.heroSourceEnabled ?: true,
+                    heroSourceEnabled = if (definition.isReco) false else (preference?.heroSourceEnabled ?: true),
                     order = preference?.order ?: 0,
+                    isReco = definition.isReco,
                 )
             }
 
@@ -366,6 +440,8 @@ object HomeCatalogSettingsRepository {
             heroEnabled = heroEnabled,
             hideUnreleasedContent = hideUnreleasedContent,
             hideCatalogUnderline = hideCatalogUnderline,
+            useBuiltinCatalog = useBuiltinCatalog,
+            useRecommendations = useRecommendations,
             items = items,
         )
     }
@@ -377,6 +453,8 @@ object HomeCatalogSettingsRepository {
                     heroEnabled = heroEnabled,
                     hideUnreleasedContent = hideUnreleasedContent,
                     hideCatalogUnderline = hideCatalogUnderline,
+                    useBuiltinCatalog = useBuiltinCatalog,
+                    useRecommendations = useRecommendations,
                     items = preferences.values.sortedBy { it.order },
                 ),
             ),
@@ -431,7 +509,13 @@ object HomeCatalogSettingsRepository {
 
     fun exportToSyncPayload(): SyncHomeCatalogPayload {
         ensureLoaded()
-        val items = preferences.values.sortedBy { it.order }.map { pref ->
+        // Reco rows are derived per-session from `/reco`; only their master toggle is synced,
+        // not individual reco-row preferences — so exclude reco keys from the catalog item list.
+        val recoKeys = recoDefinitions.mapTo(mutableSetOf()) { it.key }
+        val items = preferences.values
+            .filter { it.key !in recoKeys && !it.key.startsWith("${RECO_ADDON_ID}:") }
+            .sortedBy { it.order }
+            .map { pref ->
             val parts = pref.key.split(":")
             val isCollection = pref.key.startsWith("collection_")
             if (isCollection) {
@@ -460,6 +544,8 @@ object HomeCatalogSettingsRepository {
         return SyncHomeCatalogPayload(
             hideUnreleasedContent = hideUnreleasedContent,
             hideCatalogUnderline = hideCatalogUnderline,
+            useBuiltinCatalog = useBuiltinCatalog,
+            useRecommendations = useRecommendations,
             items = items,
         )
     }
@@ -468,6 +554,9 @@ object HomeCatalogSettingsRepository {
         ensureLoaded()
         hideUnreleasedContent = payload.hideUnreleasedContent
         hideCatalogUnderline = payload.hideCatalogUnderline
+        // Adopt the TV-shared master toggles only when the remote row actually carries them.
+        payload.useBuiltinCatalog?.let { useBuiltinCatalog = it }
+        payload.useRecommendations?.let { useRecommendations = it }
         if (payload.items.isNotEmpty()) {
             val existingHeroState = preferences.mapValues { it.value.heroSourceEnabled }
             preferences = payload.items.associate { item ->
@@ -493,8 +582,9 @@ object HomeCatalogSettingsRepository {
 
     private fun allOrderedKeys(): List<String> {
         val catalogKeys = definitions.map { it.key }
+        val recoKeys = recoDefinitions.map { it.key }
         val collectionKeys = collectionDefinitions.map { it.key }
-        return (catalogKeys + collectionKeys)
+        return (catalogKeys + recoKeys + collectionKeys)
             .sortedBy { key -> preferences[key]?.order ?: Int.MAX_VALUE }
     }
 
