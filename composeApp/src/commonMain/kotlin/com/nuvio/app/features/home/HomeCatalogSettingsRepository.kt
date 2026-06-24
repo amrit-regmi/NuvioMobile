@@ -165,18 +165,7 @@ object HomeCatalogSettingsRepository {
      */
     fun syncRecoRows(recoRows: List<RecoRow>) {
         ensureLoaded()
-        recoDefinitions = recoRows.map { row ->
-            HomeCatalogDefinition(
-                key = row.key,
-                defaultTitle = row.label,
-                addonName = RECO_ADDON_ID,
-                manifestUrl = "",
-                type = row.contentType ?: "movie",
-                catalogId = row.reasonType,
-                supportsPagination = false,
-                isReco = true,
-            )
-        }
+        recoDefinitions = recoRows.map { row -> row.toHomeCatalogDefinition() }
         normalizePreferences()
         enforcePinnedCollectionsAtTop()
         publish()
@@ -436,6 +425,9 @@ object HomeCatalogSettingsRepository {
         }
 
         val items = (catalogItems + collectionItems)
+            // Defensive dedupe: the home renders one Compose item per key, so a duplicate key
+            // would both duplicate a row and crash the lazy list. Keep the first occurrence.
+            .distinctBy { it.key }
             .sortedBy { it.order }
 
         _uiState.value = HomeCatalogSettingsUiState(

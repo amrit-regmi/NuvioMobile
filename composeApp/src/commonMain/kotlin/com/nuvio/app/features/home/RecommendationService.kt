@@ -31,6 +31,23 @@ data class RecoRow(
     /** Stable key for this reco row, used as the home-catalog ordering key. */
     val key: String
         get() = "${RECO_ADDON_ID}:${contentType.orEmpty()}:${reasonType}"
+
+    /**
+     * Single source of truth for turning a reco row into its [HomeCatalogDefinition].
+     * Both [HomeRepository] (reco sections) and [HomeCatalogSettingsRepository] (reco ordering)
+     * use this so the reco definition is never constructed two divergent ways.
+     */
+    fun toHomeCatalogDefinition(): HomeCatalogDefinition =
+        HomeCatalogDefinition(
+            key = key,
+            defaultTitle = label,
+            addonName = RECO_ADDON_ID,
+            manifestUrl = "",
+            type = contentType ?: "movie",
+            catalogId = reasonType,
+            supportsPagination = false,
+            isReco = true,
+        )
 }
 
 /** Synthetic addon id for reco rows, mirroring the TV app's `reco_engine`. */

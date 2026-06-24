@@ -511,7 +511,11 @@ private fun ManagedAddon?.toPendingAddon(
  * ingests / persists / displays, and block add/remove for it.
  */
 internal fun isBackendManagedAddonUrl(manifestUrl: String): Boolean =
-    PrivateBackend.isBackendUrl(manifestUrl)
+    // PATH-SPECIFIC: only OUR `/catalog-addon/...` manifest is the built-in source. Matching on
+    // host alone (the old behaviour) wrongly stripped legitimate per-profile addons that share
+    // the backend host (everything is path-routed through hamrocinema.regmig.com), which killed
+    // real addon loading for profiles like "Advisor" (Bug 4).
+    PrivateBackend.isBackendCatalogAddonUrl(manifestUrl)
 
 private fun List<String>.withoutBackendAddonUrls(): List<String> =
     filterNot { isBackendManagedAddonUrl(it) }

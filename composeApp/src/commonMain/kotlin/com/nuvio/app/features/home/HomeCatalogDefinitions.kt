@@ -1,6 +1,7 @@
 package com.nuvio.app.features.home
 
 import com.nuvio.app.core.i18n.localizedMediaTypeLabel
+import com.nuvio.app.core.network.PrivateBackend
 import com.nuvio.app.features.addons.ManagedAddon
 import com.nuvio.app.features.addons.enabledAddons
 import com.nuvio.app.features.catalog.supportsPagination
@@ -19,6 +20,12 @@ data class HomeCatalogDefinition(
     val supportsPagination: Boolean,
     /** True for personalized recommendation rows served by `/reco`, not the catalog-addon. */
     val isReco: Boolean = false,
+    /**
+     * True for rows served by OUR built-in backend catalog-addon (gated by the
+     * `useBuiltinCatalog` master toggle). False for genuine per-profile Stremio addon rows,
+     * which are NOT affected by that toggle (mirrors NuvioTV's `kind=="builtin"` gating).
+     */
+    val isBuiltin: Boolean = false,
 )
 
 fun buildHomeCatalogDefinitions(addons: List<ManagedAddon>): List<HomeCatalogDefinition> =
@@ -26,6 +33,7 @@ fun buildHomeCatalogDefinitions(addons: List<ManagedAddon>): List<HomeCatalogDef
         val manifest = addon.manifest ?: return@mapNotNull null
         addon to manifest
     }.flatMap { (addon, manifest) ->
+        val builtin = PrivateBackend.isBackendCatalogAddonUrl(addon.manifestUrl)
         manifest.catalogs
             .filter { catalog -> catalog.extra.none { it.isRequired } }
             .map { catalog ->
@@ -43,6 +51,7 @@ fun buildHomeCatalogDefinitions(addons: List<ManagedAddon>): List<HomeCatalogDef
                     type = catalog.type,
                     catalogId = catalog.id,
                     supportsPagination = catalog.supportsPagination(),
+                    isBuiltin = builtin,
                 )
             }
     }.distinctBy(HomeCatalogDefinition::key)

@@ -182,18 +182,7 @@ object HomeRepository {
                 publishCurrentState(isLoading = _uiState.value.isLoading, requestKey = activeRequestKey ?: lastRequestKey)
                 return@launch
             }
-            recoDefinitions = rows.map { row ->
-                HomeCatalogDefinition(
-                    key = row.key,
-                    defaultTitle = row.label,
-                    addonName = RECO_ADDON_ID,
-                    manifestUrl = "",
-                    type = row.contentType ?: "movie",
-                    catalogId = row.reasonType,
-                    supportsPagination = false,
-                    isReco = true,
-                )
-            }
+            recoDefinitions = rows.map { row -> row.toHomeCatalogDefinition() }
             cachedRecoSections = rows.associate { row ->
                 row.key to HomeCatalogSection(
                     key = row.key,
@@ -259,14 +248,22 @@ object HomeRepository {
         fun HomeCatalogSection.withReleaseFilter(): HomeCatalogSection =
             if (todayIsoDate == null) this else filterReleasedItems(todayIsoDate)
 
-        // Built-in catalog provider master toggle: when off, the backend catalog-addon's
-        // catalog rows are suppressed (mirrors the TV app's `useBuiltinCatalog` gate).
-        // Reco rows are gated separately by `useRecommendations` (recoDefinitions is empty
-        // when that toggle is off). Reco rows survive even when the catalog toggle is off.
-        val builtinDefinitions = if (snapshot.useBuiltinCatalog) currentDefinitions else emptyList()
+        // Built-in catalog provider master toggle: when off, ONLY the backend catalog-addon's
+        // rows (isBuiltin) are suppressed (mirrors the TV app's `useBuiltinCatalog` gate, which
+        // only filters `kind=="builtin"` rows). Genuine per-profile addon rows are NOT gated by
+        // this toggle and always show. Reco rows are gated separately by `useRecommendations`
+        // (recoDefinitions is empty when that toggle is off).
+        val catalogDefinitions = if (snapshot.useBuiltinCatalog) {
+            currentDefinitions
+        } else {
+            currentDefinitions.filterNot { it.isBuiltin }
+        }
         val recommendationsEnabled = snapshot.useRecommendations
         val activeRecoDefinitions = if (recommendationsEnabled) recoDefinitions else emptyList()
-        val allDefinitions = builtinDefinitions + activeRecoDefinitions
+        // Dedupe by key so a catalog never produces two rows even if it appears in both the
+        // backend manifest and a per-profile addon manifest (Bug 1).
+        val allDefinitions = (catalogDefinitions + activeRecoDefinitions)
+            .distinctBy { it.key }
         val sectionLookup = cachedSections + cachedRecoSections
 
         val sections = allDefinitions

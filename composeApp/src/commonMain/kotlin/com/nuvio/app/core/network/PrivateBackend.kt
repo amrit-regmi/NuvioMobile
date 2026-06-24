@@ -77,6 +77,23 @@ object PrivateBackend {
         return hostOf(raw).equals(host, ignoreCase = true)
     }
 
+    /**
+     * True only if [url] points at OUR built-in catalog-addon (`/catalog-addon/...`) on the
+     * backend host. Unlike [isBackendUrl] (host-only), this is PATH-SPECIFIC so that genuine
+     * per-profile Stremio addons that happen to be served from the same host (everything routes
+     * through hamrocinema.regmig.com via Caddy path-routing) are NOT mistaken for the built-in
+     * source and stripped from the addon list (Bug 4 regression guard).
+     */
+    fun isBackendCatalogAddonUrl(url: String?): Boolean {
+        val raw = url?.trim().orEmpty()
+        if (raw.isEmpty()) return false
+        if (!hostOf(raw).equals(host, ignoreCase = true)) return false
+        val path = raw.substringAfter("://", raw).substringAfter("/", "").substringBefore("?")
+        return path == "catalog-addon/manifest.json" ||
+            path == "catalog-addon" ||
+            path.startsWith("catalog-addon/")
+    }
+
     private fun hostOf(url: String): String = url
         .substringAfter("://")
         .substringBefore("/")

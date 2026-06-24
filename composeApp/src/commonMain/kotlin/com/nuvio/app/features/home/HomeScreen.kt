@@ -422,8 +422,16 @@ fun HomeScreen(
             cloudLibraryUiState = cloudLibraryUiState,
         )
     }
-    val enabledAddons = remember(contentAddons) {
-        contentAddons.enabledAddons()
+    // The home composes from TWO addon sources, mirroring the TV app's pipeline:
+    //   1. OUR built-in backend catalog-addon (from ContentSourceProvider), and
+    //   2. the ACTIVE profile's installed Stremio addons (AddonRepository — pulled per profile
+    //      from Supabase). Earlier builds fed only (1), so a profile's installed addons (e.g.
+    //      "Advisor") produced no catalog rows (Bug 4). Dedupe by manifestUrl with the backend
+    //      source kept first so it never double-counts as both content source and addon (Bug 1).
+    val enabledAddons = remember(contentAddons, addonsUiState.addons) {
+        (contentAddons + addonsUiState.addons)
+            .enabledAddons()
+            .distinctBy { it.manifestUrl }
     }
     val isRefreshingEnabledAddons = remember(enabledAddons) {
         enabledAddons.any { addon -> addon.isRefreshing }
