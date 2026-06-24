@@ -437,13 +437,25 @@ object StreamsRepository {
                 null
             }
 
+            // For series episodes, the Stremio protocol requires id=<contentId>:<season>:<episode>.
+            // Without the episode qualifier the backend returns 0 streams.
+            val streamId = if (
+                type.equals("series", ignoreCase = true) &&
+                season != null && episode != null &&
+                !videoId.contains(':')
+            ) {
+                "$videoId:$season:$episode"
+            } else {
+                videoId
+            }
+
             streamAddons.forEach { addon ->
                 launch {
                     val url = buildAddonResourceUrl(
                         manifestUrl = addon.manifest.transportUrl,
                         resource = "stream",
                         type = type,
-                        id = videoId,
+                        id = streamId,
                     )
                     log.d { "Fetching streams from: $url" }
 

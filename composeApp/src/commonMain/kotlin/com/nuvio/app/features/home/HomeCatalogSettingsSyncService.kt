@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -114,38 +115,49 @@ object HomeCatalogSettingsSyncService {
     @Volatile
     private var remoteAppliedSignature: HomeCatalogChangeSignature? = null
 
+    /** Guards against concurrent pullFromServer calls (e.g. pullAllForProfile + foreground pull). */
+    private val pullMutex = Mutex()
+
     fun startObserving() {
         if (observeJob?.isActive == true) return
         observeLocalChangesAndPush()
     }
 
     suspend fun pullFromServer(profileId: Int) {
-        runCatching {
-            val pullToken = currentPullToken(profileId) ?: return
-            val localPayload = HomeCatalogSettingsRepository.exportToSyncPayload()
-            val remote = fetchBestRemotePayload(profileId, localPayload)
+        if (!pullMutex.tryLock()) {
+            log.d { "pullFromServer — skipped, pull already in progress" }
+            return
+        }
+        try {
+            runCatching {
+                val pullToken = currentPullToken(profileId) ?: return
+                val localPayload = HomeCatalogSettingsRepository.exportToSyncPayload()
+                val remote = fetchBestRemotePayload(profileId, localPayload)
 
-            if (remote == null) {
-                log.i { "pullFromServer — no remote home catalog settings found; preserving local" }
-                markInitialPullComplete(pullToken)
-                return
-            }
+                if (remote == null) {
+                    log.i { "pullFromServer — no remote home catalog settings found; preserving local" }
+                    markInitialPullComplete(pullToken)
+                    return
+                }
 
-            val remotePayload = remote.payload
+                val remotePayload = remote.payload
 
-            if (remotePayload.items.isEmpty()) {
-                log.i { "pullFromServer — remote has empty items, preserving local catalog order" }
+                if (remotePayload.items.isEmpty()) {
+                    log.i { "pullFromServer — remote has empty items, preserving local catalog order" }
+                    applyRemotePayload(remotePayload, pullToken)
+                    markInitialPullComplete(pullToken)
+                    return
+                }
+
                 applyRemotePayload(remotePayload, pullToken)
+                log.i { "pullFromServer — applied ${remotePayload.items.size} items from remote" }
                 markInitialPullComplete(pullToken)
-                return
+            }.onFailure { e ->
+                isSyncingFromRemote = false
+                log.e(e) { "pullFromServer — FAILED" }
             }
-
-            applyRemotePayload(remotePayload, pullToken)
-            log.i { "pullFromServer — applied ${remotePayload.items.size} items from remote" }
-            markInitialPullComplete(pullToken)
-        }.onFailure { e ->
-            isSyncingFromRemote = false
-            log.e(e) { "pullFromServer — FAILED" }
+        } finally {
+            pullMutex.unlock()
         }
     }
 

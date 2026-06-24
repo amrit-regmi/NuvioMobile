@@ -73,11 +73,11 @@ object RecommendationService {
         if (authState !is AuthState.Authenticated || authState.isAnonymous) return emptyList()
         val userId = authState.userId
 
-        val url = "${PrivateBackend.recoBaseUrl}/home/$userId?limit_per_row=$LIMIT_PER_ROW"
+        // TV calls: GET /reco/home/{supabase_uuid}?profile_id={numeric_id}&limit_per_row=N
+        val profileId = ProfileRepository.activeProfileId
+        val url = "${PrivateBackend.recoBaseUrl}/home/$userId?profile_id=$profileId&limit_per_row=$LIMIT_PER_ROW"
         val headers = buildMap {
             putAll(BackendAuth.authHeadersFor(url))
-            // Per-profile reco scoping, mirroring NuvioTV's X-Profile-Id header (integer index).
-            put("X-Profile-Id", ProfileRepository.activeProfileId.toString())
         }
         if (!headers.containsKey("Authorization")) return emptyList()
 

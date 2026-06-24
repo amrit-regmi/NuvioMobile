@@ -707,6 +707,9 @@ object WatchProgressRepository {
     }
 
     private suspend fun awaitReadyMetadataProviders(): MetadataProviderReadiness? {
+        // metadataProviderReadiness() already merges ContentSourceProvider.cachedContentAddons
+        // (the private backend catalog-addon) with the user-managed addons from AddonRepository,
+        // so if the backend manifest has been fetched this will be immediately ready.
         val current = AddonRepository.uiState.value.metadataProviderReadiness()
         if (current.isReady) return current
         if (current.isSettledWithoutProviders) return null
@@ -1140,9 +1143,17 @@ object WatchProgressRepository {
 
     private fun AddonsUiState.metadataProviderReadiness(): MetadataProviderReadiness {
         val enabled = addons.enabledAddons()
-        val providers = enabled
+        // Private-backend fork: the backend catalog-addon is a built-in source that lives in
+        // ContentSourceProvider, NOT in AddonRepository (it is explicitly excluded from
+        // AddonRepository to prevent it from appearing as a deletable user addon). We merge it
+        // in here so the watch-progress metadata resolver can find poster/meta for items whose
+        // parentMetaId is served by our backend, including items watched on TV.
+        val backendAddons = com.nuvio.app.core.content.ContentSourceProvider.cachedContentAddons
+        val allAddons = enabled + backendAddons
+        val providers = allAddons
             .mapNotNull { addon -> addon.manifest }
             .filter { manifest -> manifest.hasMetaResource() }
+            .distinctBy { it.id }
         return MetadataProviderReadiness(
             providers = providers,
             isRefreshing = enabled.any { addon -> addon.isRefreshing },

@@ -16,7 +16,11 @@ object SupabaseProvider {
         val client: SupabaseClient,
     )
 
-    private var holder: ClientHolder? = null
+    // Lock protects holder against concurrent creation from multiple Dispatchers.Default
+    // coroutines all racing to call SupabaseProvider.client before the first client is stored,
+    // which would cause the Supabase library to emit "SupabaseClient created!" 3+ times.
+    private val holderLock = Any()
+    @Volatile private var holder: ClientHolder? = null
 
     val selectedBackend: SyncBackendConfig
         get() = SyncBackendRepository.selectedBackend
@@ -26,30 +30,42 @@ object SupabaseProvider {
         get() = clientFor(selectedBackend)
 
     fun rebuildClient() {
-        holder = null
+        synchronized(holderLock) {
+            holder = null
+        }
     }
 
     @OptIn(SupabaseInternal::class)
     private fun clientFor(config: SyncBackendConfig): SupabaseClient {
+        // Fast path: already have a compatible client.
         holder
             ?.takeIf { it.backend.hasSameConnectionIdentity(config) }
             ?.let { return it.client }
 
-        val userAgent = "NuvioMobile/${AppVersionConfig.VERSION_NAME.ifBlank { "dev" }}"
-        val nextClient = createSupabaseClient(
-            supabaseUrl = config.normalizedSupabaseUrl,
-            supabaseKey = config.anonKey,
-        ) {
-            httpConfig {
-                defaultRequest {
-                    headers.append(HttpHeaders.UserAgent, userAgent)
+        // Slow path: create under lock to ensure exactly one client is ever created
+        // per connection identity, even when multiple coroutines race at startup.
+        synchronized(holderLock) {
+            // Re-check inside the lock (double-checked locking).
+            holder
+                ?.takeIf { it.backend.hasSameConnectionIdentity(config) }
+                ?.let { return it.client }
+
+            val userAgent = "NuvioMobile/${AppVersionConfig.VERSION_NAME.ifBlank { "dev" }}"
+            val nextClient = createSupabaseClient(
+                supabaseUrl = config.normalizedSupabaseUrl,
+                supabaseKey = config.anonKey,
+            ) {
+                httpConfig {
+                    defaultRequest {
+                        headers.append(HttpHeaders.UserAgent, userAgent)
+                    }
                 }
+                install(Auth)
+                install(Postgrest)
+                install(Functions)
             }
-            install(Auth)
-            install(Postgrest)
-            install(Functions)
+            holder = ClientHolder(backend = config, client = nextClient)
+            return nextClient
         }
-        holder = ClientHolder(backend = config, client = nextClient)
-        return nextClient
     }
 }
