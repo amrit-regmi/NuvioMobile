@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material3.BasicAlertDialog
 import androidx.compose.material3.Button
@@ -57,7 +58,10 @@ import nuvio.composeapp.generated.resources.settings_builtin_subtitle_descriptio
 import nuvio.composeapp.generated.resources.settings_builtin_subtitle_title
 import org.jetbrains.compose.resources.stringResource
 
-internal fun LazyListScope.builtInProvidersSettingsContent(isTablet: Boolean) {
+internal fun LazyListScope.builtInProvidersSettingsContent(
+    isTablet: Boolean,
+    onDebridClick: () -> Unit = {},
+) {
     // ── Providers (the 3+1 toggles) ────────────────────────────────────────────
     item {
         val homeSettings by remember {
@@ -104,6 +108,13 @@ internal fun LazyListScope.builtInProvidersSettingsContent(isTablet: Boolean) {
                     checked = builtInProviders.subtitleProviderEnabled,
                     isTablet = isTablet,
                     onCheckedChange = BuiltInProvidersSettingsRepository::setSubtitleProviderEnabled,
+                )
+                SettingsGroupDivider(isTablet = isTablet)
+                SettingsNavigationRow(
+                    title = "Debrid / Download Provider",
+                    icon = Icons.Rounded.CloudDownload,
+                    isTablet = isTablet,
+                    onClick = onDebridClick,
                 )
             }
         }

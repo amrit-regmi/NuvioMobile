@@ -537,6 +537,7 @@ private fun MobileSettingsScreen(
                 }
                 SettingsPage.BuiltInProviders -> builtInProvidersSettingsContent(
                     isTablet = false,
+                    onDebridClick = { onPageChange(SettingsPage.Debrid) },
                 )
                 SettingsPage.Account -> accountSettingsContent(
                     isTablet = false,
@@ -934,6 +935,7 @@ private fun TabletSettingsScreen(
                     }
                     SettingsPage.BuiltInProviders -> builtInProvidersSettingsContent(
                         isTablet = true,
+                        onDebridClick = { openInlinePage(SettingsPage.Debrid) },
                     )
                     SettingsPage.Account -> accountSettingsContent(
                         isTablet = true,

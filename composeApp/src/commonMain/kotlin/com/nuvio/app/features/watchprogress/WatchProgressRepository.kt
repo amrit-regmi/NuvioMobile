@@ -145,6 +145,18 @@ object WatchProgressRepository {
             }
         }
 
+        // Private-backend fork: also trigger metadata resolution when the built-in backend
+        // catalog-addon manifest loads into ContentSourceProvider. This covers the common case
+        // where continue-watching items (including TV-watched items) need poster/meta but
+        // AddonRepository has no user-managed addons yet — the backend addon is the sole source.
+        syncScope.launch {
+            com.nuvio.app.core.content.ContentSourceProvider.contentAddonsFlow.collectLatest { contentAddons ->
+                if (contentAddons.isNotEmpty() && !shouldUseTraktProgress()) {
+                    retryMetadataResolutionWhenAddonMetaProvidersReady(AddonRepository.uiState.value)
+                }
+            }
+        }
+
     }
 
     fun ensureLoaded() {
@@ -707,13 +719,18 @@ object WatchProgressRepository {
     }
 
     private suspend fun awaitReadyMetadataProviders(): MetadataProviderReadiness? {
-        // metadataProviderReadiness() already merges ContentSourceProvider.cachedContentAddons
-        // (the private backend catalog-addon) with the user-managed addons from AddonRepository,
-        // so if the backend manifest has been fetched this will be immediately ready.
+        // metadataProviderReadiness() merges ContentSourceProvider.cachedContentAddons (the private
+        // backend catalog-addon) with user-managed addons from AddonRepository. If the backend
+        // manifest has already been fetched, current.isReady is true immediately.
         val current = AddonRepository.uiState.value.metadataProviderReadiness()
         if (current.isReady) return current
-        if (current.isSettledWithoutProviders) return null
 
+        // Wait up to 30 s for either AddonRepository or ContentSourceProvider to produce a
+        // provider with a meta resource. We can't rely on AddonRepository alone because the
+        // built-in backend catalog-addon lives in ContentSourceProvider and its arrival won't
+        // update AddonRepository.uiState — the contentAddonsFlow collector in our init{} block
+        // will kick retryMetadataResolution, but if we are already in awaitReadyMetadataProviders
+        // we need to loop here until one of the two sources is ready.
         val settled = withTimeoutOrNull(30_000L) {
             AddonRepository.uiState.first { state ->
                 val readiness = state.metadataProviderReadiness()
