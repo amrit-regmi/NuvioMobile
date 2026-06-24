@@ -78,6 +78,7 @@ object RecommendationService {
         val url = "${PrivateBackend.recoBaseUrl}/home/$userId?profile_id=$profileId&limit_per_row=$LIMIT_PER_ROW"
         val headers = buildMap {
             putAll(BackendAuth.authHeadersFor(url))
+            put("X-Profile-Id", profileId.toString())
         }
         if (!headers.containsKey("Authorization")) return emptyList()
 

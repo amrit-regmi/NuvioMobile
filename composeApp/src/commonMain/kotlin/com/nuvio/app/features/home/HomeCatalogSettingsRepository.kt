@@ -109,6 +109,7 @@ object HomeCatalogSettingsRepository {
     private var hasLoaded = false
     private var definitions: List<HomeCatalogDefinition> = emptyList()
     private var recoDefinitions: List<HomeCatalogDefinition> = emptyList()
+    private var lastFetchedRecoRows: List<RecoRow> = emptyList()
     private var collectionDefinitions: List<CollectionCatalogDefinition> = emptyList()
     private var preferences: MutableMap<String, StoredHomeCatalogPreference> = mutableMapOf()
     private var heroEnabled = true
@@ -135,6 +136,7 @@ object HomeCatalogSettingsRepository {
         useRecommendations = true
         definitions = emptyList()
         recoDefinitions = emptyList()
+        lastFetchedRecoRows = emptyList()
         collectionDefinitions = emptyList()
         rowOrderRecoPrefs = emptyMap()
         _uiState.value = HomeCatalogSettingsUiState()
@@ -143,6 +145,8 @@ object HomeCatalogSettingsRepository {
     fun clearLocalState() {
         hasLoaded = false
         definitions = emptyList()
+        recoDefinitions = emptyList()
+        lastFetchedRecoRows = emptyList()
         collectionDefinitions = emptyList()
         preferences.clear()
         heroEnabled = true
@@ -179,6 +183,7 @@ object HomeCatalogSettingsRepository {
      */
     fun syncRecoRows(recoRows: List<RecoRow>) {
         ensureLoaded()
+        lastFetchedRecoRows = recoRows
         recoDefinitions = recoRows.map { row -> row.toHomeCatalogDefinition() }
         // Apply TV-authored reco row ordering when rowOrderRecoPrefs is available.
         // The reco row key is "reco_engine:${contentType}:${reasonType_index}" (e.g.
@@ -315,6 +320,7 @@ object HomeCatalogSettingsRepository {
         useBuiltinCatalog = true
         useRecommendations = true
         preferences.clear()
+        lastFetchedRecoRows = emptyList()
         rowOrderRecoPrefs = emptyMap()
         normalizePreferences()
         publish()
@@ -671,6 +677,12 @@ object HomeCatalogSettingsRepository {
             }
             rowOrderRecoPrefs = newRecoPrefs
             preferences = newPrefs
+            // Re-apply rowOrder filtering to already-loaded reco rows so the race between
+            // the reco fetch and the settings pull doesn't leave unfiltered rows on screen.
+            if (lastFetchedRecoRows.isNotEmpty()) {
+                syncRecoRows(lastFetchedRecoRows)
+                return  // syncRecoRows handles publish/persist/applyCurrentSettings
+            }
         } else if (payload.items.isNotEmpty()) {
             // Legacy mobile format: items array (no reco rows, no rowOrder).
             val existingHeroState = preferences.mapValues { it.value.heroSourceEnabled }

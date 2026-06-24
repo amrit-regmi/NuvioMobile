@@ -111,8 +111,8 @@ internal fun LazyListScope.builtInProvidersSettingsContent(
                 )
                 SettingsGroupDivider(isTablet = isTablet)
                 SettingsNavigationRow(
-                    title = "Debrid / Download Provider",
-                    description = "Configure TorBox or other download providers",
+                    title = "TorBox / Debrid",
+                    description = "Provides streams via TorBox debrid. Add your personal key or leave blank to use the shared key.",
                     icon = Icons.Rounded.CloudDownload,
                     isTablet = isTablet,
                     onClick = onDebridClick,
