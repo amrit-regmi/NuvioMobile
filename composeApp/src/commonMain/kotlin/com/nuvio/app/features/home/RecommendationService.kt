@@ -57,8 +57,8 @@ const val RECO_ADDON_ID = "reco_engine"
  * Fetches personalized recommendation rows from OUR backend (`/reco/home/{user_id}`).
  *
  * Identity is Bearer-derived server-side (the `{user_id}` path param is decorative), and
- * we additionally send `X-Profile-Id` (the active profile index) so reco scoping matches
- * the TV app's per-profile recommendations. The recommendations master toggle
+ * we additionally pass `?profile_id={numeric_profile_id}` as a query param so reco scoping
+ * matches the TV app's per-profile recommendations. The recommendations master toggle
  * ([HomeCatalogSettingsRepository.useRecommendations]) decides whether this is called at all.
  */
 object RecommendationService {
