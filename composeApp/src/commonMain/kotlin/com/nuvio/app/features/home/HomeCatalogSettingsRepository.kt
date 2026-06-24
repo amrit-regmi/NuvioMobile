@@ -188,7 +188,8 @@ object HomeCatalogSettingsRepository {
             for (row in recoRows) {
                 val baseReasonType = row.reasonType.substringBeforeLast('_')
                 val lookupKey = "${row.contentType.orEmpty()}:$baseReasonType"
-                val (order, enabled) = rowOrderRecoPrefs[lookupKey] ?: continue
+                // Rows absent from rowOrder are disabled — TV's rowOrder is the authority.
+                val (order, enabled) = rowOrderRecoPrefs[lookupKey] ?: Pair(Int.MAX_VALUE, false)
                 val rowKey = row.key
                 preferences[rowKey] = StoredHomeCatalogPreference(
                     key = rowKey,
