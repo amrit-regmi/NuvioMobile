@@ -1,6 +1,7 @@
 package com.nuvio.app.features.addons
 
 import co.touchlab.kermit.Logger
+import com.nuvio.app.core.network.PrivateBackend
 import com.nuvio.app.core.network.SupabaseProvider
 import com.nuvio.app.features.profiles.ProfileRepository
 import io.github.jan.supabase.postgrest.postgrest
@@ -119,6 +120,9 @@ object AddonRepository {
             val rowsByUrl = linkedMapOf<String, AddonRow>()
             rows.forEach { row ->
                 val manifestUrl = ensureManifestSuffix(row.url)
+                // Never surface OUR built-in backend source as a user-installed addon,
+                // even if an older client synced it into the `addons` table (Bug 3).
+                if (isBackendManagedAddonUrl(manifestUrl)) return@forEach
                 if (!rowsByUrl.containsKey(manifestUrl)) {
                     rowsByUrl[manifestUrl] = row.copy(url = manifestUrl)
                 }
@@ -233,6 +237,12 @@ object AddonRepository {
             return AddAddonResult.Error(error.message ?: getString(Res.string.addon_invalid_url))
         }
 
+        // Bug 3: our backend catalog-addon is a built-in, locked source — it can't be
+        // added/managed as a user addon.
+        if (isBackendManagedAddonUrl(manifestUrl)) {
+            return AddAddonResult.Error(getString(Res.string.addon_already_installed))
+        }
+
         if (_uiState.value.addons.any { it.manifestUrl == manifestUrl }) {
             return AddAddonResult.Error(getString(Res.string.addon_already_installed))
         }
@@ -266,6 +276,11 @@ object AddonRepository {
 
     fun removeAddon(manifestUrl: String) {
         if (isUsingPrimaryAddonsFromSecondaryProfile()) return
+        // Bug 3: the built-in backend source is non-removable — never let it be deleted.
+        if (isBackendManagedAddonUrl(manifestUrl)) {
+            log.w { "removeAddon() — refusing to remove built-in backend source: $manifestUrl" }
+            return
+        }
         log.i { "removeAddon() — $manifestUrl" }
         _uiState.update { current ->
             current.copy(
@@ -486,8 +501,23 @@ private fun ManagedAddon?.toPendingAddon(
         )
     }
 
+/**
+ * Bug 3 (private-backend fork): OUR FastAPI catalog-addon is a BUILT-IN, non-removable
+ * content source (served via [PrivateBackendContentSource]). It must never appear in the
+ * user-facing addon-management list and must never be deletable. Earlier builds could
+ * leak its manifest URL into per-profile addon storage / the synced `addons` table, where
+ * it then showed up as an installed, deletable addon — and the owner deleted it, breaking
+ * content. We defensively strip the backend manifest URL from every list AddonRepository
+ * ingests / persists / displays, and block add/remove for it.
+ */
+internal fun isBackendManagedAddonUrl(manifestUrl: String): Boolean =
+    PrivateBackend.isBackendUrl(manifestUrl)
+
+private fun List<String>.withoutBackendAddonUrls(): List<String> =
+    filterNot { isBackendManagedAddonUrl(it) }
+
 private fun dedupeManifestUrls(urls: List<String>): List<String> =
-    urls.map(::ensureManifestSuffix).distinct()
+    urls.map(::ensureManifestSuffix).withoutBackendAddonUrls().distinct()
 
 private fun ensureManifestSuffix(url: String): String {
     val path = url.substringBefore("?").trimEnd('/')

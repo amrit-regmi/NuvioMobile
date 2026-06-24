@@ -108,14 +108,10 @@ internal fun LazyListScope.settingsRootContent(
                         isTablet = isTablet,
                         onClick = onAccountClick,
                     )
-                    SettingsGroupDivider(isTablet = isTablet)
-                    SettingsNavigationRow(
-                        title = stringResource(Res.string.compose_settings_page_trakt),
-                        description = stringResource(Res.string.compose_settings_root_trakt_description),
-                        iconPainter = integrationLogoPainter(IntegrationLogo.Trakt),
-                        isTablet = isTablet,
-                        onClick = onTraktClick,
-                    )
+                    // Bug 4 (private-backend fork): the Trakt integration is removed from
+                    // the user-facing settings, mirroring the TV app. The Trakt page/models
+                    // remain in the codebase (removing them entirely would break the build),
+                    // but no entry point to it is shown to the user.
                 }
             }
         }

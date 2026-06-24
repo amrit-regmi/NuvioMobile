@@ -529,12 +529,13 @@ fun App() {
             val hasCachedProfileAccess =
                 cachedProfiles.isNotEmpty() &&
                     authState !is AuthState.Authenticated
+            // Private instance: cached profiles only grant access while genuinely
+            // offline (a real account that previously signed in and lost
+            // connectivity). When online, an unauthenticated user must always be
+            // routed to login — there is no guest / anonymous bypass.
             val allowCachedProfileAccess =
                 hasCachedProfileAccess &&
-                    (
-                        networkStatusUiState.condition != NetworkCondition.Online ||
-                            gateScreen != AppGateScreen.Auth.name
-                    )
+                    networkStatusUiState.condition != NetworkCondition.Online
 
             when (authState) {
                 is AuthState.Loading -> {

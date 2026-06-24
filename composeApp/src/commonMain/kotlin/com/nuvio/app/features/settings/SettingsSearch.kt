@@ -195,14 +195,7 @@ internal fun settingsSearchEntries(
         category = accountCategory,
         icon = Icons.Rounded.AccountCircle,
     )
-    addPage(
-        page = SettingsPage.TraktAuthentication,
-        key = "trakt",
-        title = traktPage,
-        description = stringResource(Res.string.compose_settings_root_trakt_description),
-        category = accountCategory,
-        icon = Icons.Rounded.Link,
-    )
+    // Bug 4 (private-backend fork): Trakt page is not exposed in settings search.
     addPage(
         page = SettingsPage.Appearance,
         key = "layout",
@@ -818,34 +811,8 @@ internal fun settingsSearchEntries(
         icon = Icons.Rounded.Notifications,
     )
 
-    addRow(
-        page = SettingsPage.TraktAuthentication,
-        key = "trakt-authentication",
-        title = stringResource(Res.string.settings_trakt_authentication),
-        description = stringResource(Res.string.settings_trakt_intro_description),
-        pageLabel = traktPage,
-        section = stringResource(Res.string.settings_trakt_authentication),
-        category = accountCategory,
-        icon = Icons.Rounded.Link,
-    )
-    listOf(
-        PlaybackSearchRow("trakt-library-source", stringResource(Res.string.trakt_library_source_title), stringResource(Res.string.trakt_library_source_subtitle)),
-        PlaybackSearchRow("trakt-watch-progress", stringResource(Res.string.trakt_watch_progress_title), stringResource(Res.string.trakt_watch_progress_subtitle)),
-        PlaybackSearchRow("trakt-continue-watching-window", stringResource(Res.string.trakt_continue_watching_window), stringResource(Res.string.trakt_continue_watching_subtitle)),
-        PlaybackSearchRow("trakt-comments", stringResource(Res.string.settings_trakt_comments), stringResource(Res.string.settings_trakt_comments_description)),
-        PlaybackSearchRow("trakt-more-like-this-source", stringResource(Res.string.trakt_more_like_this_source_title), stringResource(Res.string.trakt_more_like_this_source_subtitle)),
-    ).forEach { row ->
-        addRow(
-            page = SettingsPage.TraktAuthentication,
-            key = row.key,
-            title = row.title,
-            description = row.description,
-            pageLabel = traktPage,
-            section = stringResource(Res.string.settings_trakt_features),
-            category = accountCategory,
-            icon = Icons.Rounded.Link,
-        )
-    }
+    // Bug 4 (private-backend fork): Trakt is removed from the user-facing settings, so it
+    // is no longer registered as a searchable settings page/rows.
 
     return entries
 }

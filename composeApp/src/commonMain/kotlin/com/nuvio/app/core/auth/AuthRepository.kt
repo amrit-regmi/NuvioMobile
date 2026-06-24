@@ -9,8 +9,6 @@ import io.github.jan.supabase.auth.providers.builtin.Email
 import io.github.jan.supabase.auth.status.SessionStatus
 import io.github.jan.supabase.exceptions.RestException
 import io.github.jan.supabase.functions.functions
-import kotlin.uuid.ExperimentalUuidApi
-import kotlin.uuid.Uuid
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -44,18 +42,13 @@ object AuthRepository {
                 if (!backendState.isLoaded) return@collectLatest
                 validatedRemoteUserId = null
 
-                AuthStorage.loadAnonymousUserId()?.let { savedAnonId ->
-                    _state.value = AuthState.Authenticated(
-                        userId = savedAnonId,
-                        email = null,
-                        isAnonymous = true,
-                    )
-                } ?: run {
-                    _state.value = AuthState.Loading
-                }
+                // Private instance: anonymous / guest sessions are not allowed. Any
+                // anonymous id left over from a previous build is purged so it can
+                // never grant access — only a real authenticated Supabase session does.
+                AuthStorage.clearAnonymousUserId()
+                _state.value = AuthState.Loading
 
                 SupabaseProvider.client.auth.sessionStatus.collect { status ->
-                    if (AuthStorage.loadAnonymousUserId() != null) return@collect
                     when (status) {
                         is SessionStatus.Authenticated -> {
                             val user = status.session.user
@@ -71,9 +64,7 @@ object AuthRepository {
                             _state.value = AuthState.Unauthenticated
                         }
                         is SessionStatus.Initializing -> {
-                            if (AuthStorage.loadAnonymousUserId() == null) {
-                                _state.value = AuthState.Loading
-                            }
+                            _state.value = AuthState.Loading
                         }
                         is SessionStatus.RefreshFailure -> {
                             _state.value = AuthState.Unauthenticated
@@ -103,35 +94,29 @@ object AuthRepository {
         }
     }
 
-    @OptIn(ExperimentalUuidApi::class)
-    fun signInAnonymously() {
-        _error.value = null
-        val userId = Uuid.random().toString()
-        AuthStorage.saveAnonymousUserId(userId)
-        _state.value = AuthState.Authenticated(
-            userId = userId,
-            email = null,
-            isAnonymous = true,
-        )
-    }
-
-    suspend fun signUpWithEmail(email: String, password: String): Result<Unit> = runCatching {
-        _error.value = null
-        SupabaseProvider.client.auth.signUpWith(Email) {
-            this.email = email
-            this.password = password
-        }
-        Unit
-    }.onFailure { e ->
-        log.e(e) { "Email sign-up failed" }
-        _error.value = e.message ?: getString(Res.string.auth_sign_up_failed)
-    }
-
     suspend fun signInWithEmail(email: String, password: String): Result<Unit> = runCatching {
         _error.value = null
         SupabaseProvider.client.auth.signInWith(Email) {
             this.email = email
             this.password = password
+        }
+        // Immediately emit the authenticated state so the root navigation reacts to the
+        // new session in-session (no app restart). Relying solely on the nested
+        // sessionStatus collector in initialize() proved unreliable here — it could be
+        // delayed or suppressed (anonymous-id guard / remote validation network call),
+        // which caused login to "flash" back to the login screen while the session was
+        // actually persisted (so a relaunch showed the user signed in). Mark this user
+        // as already-validated so the collector doesn't re-validate and bounce it.
+        val session = SupabaseProvider.client.auth.currentSessionOrNull()
+        val user = session?.user
+        val userId = user?.id.orEmpty()
+        if (userId.isNotBlank()) {
+            validatedRemoteUserId = userId
+            _state.value = AuthState.Authenticated(
+                userId = userId,
+                email = user?.email,
+                isAnonymous = false,
+            )
         }
     }.onFailure { e ->
         log.e(e) { "Email sign-in failed" }
