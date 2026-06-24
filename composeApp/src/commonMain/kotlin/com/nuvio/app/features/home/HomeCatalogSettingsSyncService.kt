@@ -42,6 +42,22 @@ data class SyncCatalogItem(
     @SerialName("collection_id") val collectionId: String = "",
 )
 
+/**
+ * A single entry in the TV-authoritative `rowOrder` array.
+ * The TV app writes catalog ordering as `rowOrder` in `nuvio_home_catalog_settings.settings_json`.
+ * - [id]: catalog id for builtin/addon rows, or base reason_type for reco rows (e.g. "personal").
+ * - [kind]: "builtin" | "reco" | "addon".
+ * - [type]: Stremio content type — "movie" | "series" | "both".
+ * - [enabled]: whether the row is shown.
+ */
+@Serializable
+data class RowOrderEntry(
+    val id: String,
+    val kind: String,
+    val type: String,
+    val enabled: Boolean = true,
+)
+
 @Serializable
 data class SyncHomeCatalogPayload(
     @SerialName("hide_unreleased_content") val hideUnreleasedContent: Boolean = false,
@@ -54,6 +70,11 @@ data class SyncHomeCatalogPayload(
     // the remote row" so we never clobber the TV-written value with a local default.
     @SerialName("useBuiltinCatalog") val useBuiltinCatalog: Boolean? = null,
     @SerialName("useRecommendations") val useRecommendations: Boolean? = null,
+    // TV-authoritative row ordering (supersedes `items` when non-empty). The TV writes this
+    // on every catalog settings change; mobile reads it to reconstruct the correct row order
+    // including reco rows. Defaults to emptyList() so old mobile-written rows (which lack it)
+    // decode cleanly via ignoreUnknownKeys.
+    @SerialName("rowOrder") val rowOrder: List<RowOrderEntry> = emptyList(),
 )
 
 @Serializable
@@ -142,15 +163,19 @@ object HomeCatalogSettingsSyncService {
 
                 val remotePayload = remote.payload
 
-                if (remotePayload.items.isEmpty()) {
-                    log.i { "pullFromServer — remote has empty items, preserving local catalog order" }
+                if (remotePayload.rowOrder.isEmpty() && remotePayload.items.isEmpty()) {
+                    log.i { "pullFromServer — remote has empty rowOrder and items, preserving local catalog order" }
                     applyRemotePayload(remotePayload, pullToken)
                     markInitialPullComplete(pullToken)
                     return
                 }
 
                 applyRemotePayload(remotePayload, pullToken)
-                log.i { "pullFromServer — applied ${remotePayload.items.size} items from remote" }
+                if (remotePayload.rowOrder.isNotEmpty()) {
+                    log.i { "pullFromServer — applied ${remotePayload.rowOrder.size} rowOrder entries from remote" }
+                } else {
+                    log.i { "pullFromServer — applied ${remotePayload.items.size} items from remote" }
+                }
                 markInitialPullComplete(pullToken)
             }.onFailure { e ->
                 isSyncingFromRemote = false
@@ -281,7 +306,7 @@ object HomeCatalogSettingsSyncService {
             }
         val rows = listOfNotNull(shared) + legacyRows
         val selected = rows
-            .filter { it.payload.items.isNotEmpty() }
+            .filter { it.payload.items.isNotEmpty() || it.payload.rowOrder.isNotEmpty() }
             .maxByOrNull { it.updatedAt.orEmpty() }
             ?: shared
             ?: legacyRows.maxByOrNull { it.updatedAt.orEmpty() }

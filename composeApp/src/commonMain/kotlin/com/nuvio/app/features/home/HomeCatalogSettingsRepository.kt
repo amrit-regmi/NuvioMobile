@@ -117,6 +117,14 @@ object HomeCatalogSettingsRepository {
     private var useBuiltinCatalog = true
     private var useRecommendations = true
 
+    /**
+     * Reco row ordering and enabled state from TV's `rowOrder` (synced via [applyFromRemote]).
+     * Keyed by `"${contentType}:${baseReasonType}"` (e.g. `"movie:personal"`), value is
+     * `(order, enabled)`. Applied in [syncRecoRows] when actual reco rows arrive from `/reco`,
+     * because we can't reconstruct their disambiguated keys (`personal_0`, etc.) before fetch.
+     */
+    private var rowOrderRecoPrefs: Map<String, Pair<Int, Boolean>> = emptyMap()
+
     fun onProfileChanged() {
         hasLoaded = false
         preferences.clear()
@@ -128,6 +136,7 @@ object HomeCatalogSettingsRepository {
         definitions = emptyList()
         recoDefinitions = emptyList()
         collectionDefinitions = emptyList()
+        rowOrderRecoPrefs = emptyMap()
         _uiState.value = HomeCatalogSettingsUiState()
     }
 
@@ -141,6 +150,7 @@ object HomeCatalogSettingsRepository {
         hideCatalogUnderline = false
         useBuiltinCatalog = true
         useRecommendations = true
+        rowOrderRecoPrefs = emptyMap()
         _uiState.value = HomeCatalogSettingsUiState()
     }
 
@@ -162,10 +172,33 @@ object HomeCatalogSettingsRepository {
      * Registers the personalized recommendation rows (from `/reco`) so they appear in the
      * home catalog ordering alongside built-in catalog + collection rows. Reco rows are
      * never used as hero sources. Mirrors NuvioTV's reco-row merge into `rowOrder`.
+     *
+     * When [rowOrderRecoPrefs] is populated (from TV's `rowOrder` via [applyFromRemote]),
+     * the TV-assigned order and enabled state are applied to the newly registered reco rows.
+     * The lookup is by `"${contentType}:${baseReasonType}"` (without the `_index` suffix).
      */
     fun syncRecoRows(recoRows: List<RecoRow>) {
         ensureLoaded()
         recoDefinitions = recoRows.map { row -> row.toHomeCatalogDefinition() }
+        // Apply TV-authored reco row ordering when rowOrderRecoPrefs is available.
+        // The reco row key is "reco_engine:${contentType}:${reasonType_index}" (e.g.
+        // "reco_engine:movie:personal_0"). The TV rowOrder stores just the base reason_type
+        // (e.g. "personal"), so we strip the trailing "_<index>" to match.
+        if (rowOrderRecoPrefs.isNotEmpty()) {
+            for (row in recoRows) {
+                val baseReasonType = row.reasonType.substringBeforeLast('_')
+                val lookupKey = "${row.contentType.orEmpty()}:$baseReasonType"
+                val (order, enabled) = rowOrderRecoPrefs[lookupKey] ?: continue
+                val rowKey = row.key
+                preferences[rowKey] = StoredHomeCatalogPreference(
+                    key = rowKey,
+                    customTitle = preferences[rowKey]?.customTitle.orEmpty(),
+                    enabled = enabled,
+                    heroSourceEnabled = false,
+                    order = order,
+                )
+            }
+        }
         normalizePreferences()
         enforcePinnedCollectionsAtTop()
         publish()
@@ -281,6 +314,7 @@ object HomeCatalogSettingsRepository {
         useBuiltinCatalog = true
         useRecommendations = true
         preferences.clear()
+        rowOrderRecoPrefs = emptyMap()
         normalizePreferences()
         publish()
         persist()
@@ -535,12 +569,57 @@ object HomeCatalogSettingsRepository {
                 )
             }
         }
+
+        // Build rowOrder from the current ordered preference set (builtin + reco rows).
+        // This lets the mobile write back in the TV-compatible format so a TV pull sees
+        // the correct ordering. Collections are excluded (mobile-only concept).
+        val builtinPrefix = "community.hamrocinema-catalog:"
+        val allRows = mutableListOf<Pair<Int, RowOrderEntry>>()
+        for (pref in preferences.values) {
+            when {
+                pref.key.startsWith(builtinPrefix) -> {
+                    val rest = pref.key.removePrefix(builtinPrefix)
+                    val parts = rest.split(":")
+                    if (parts.size >= 2) {
+                        allRows += Pair(
+                            pref.order,
+                            RowOrderEntry(
+                                id = parts[1],
+                                kind = "builtin",
+                                type = parts[0],
+                                enabled = pref.enabled,
+                            ),
+                        )
+                    }
+                }
+                pref.key.startsWith("${RECO_ADDON_ID}:") -> {
+                    val rest = pref.key.removePrefix("${RECO_ADDON_ID}:")
+                    val parts = rest.split(":")
+                    if (parts.size >= 2) {
+                        val baseReasonType = parts[1].substringBeforeLast('_')
+                        allRows += Pair(
+                            pref.order,
+                            RowOrderEntry(
+                                id = baseReasonType,
+                                kind = "reco",
+                                type = parts[0],
+                                enabled = pref.enabled,
+                            ),
+                        )
+                    }
+                }
+                // Collections skipped; addon rows skipped (not in preferences by uuid alone).
+            }
+        }
+        val rowOrder = allRows.sortedBy { it.first }.map { it.second }
+
         return SyncHomeCatalogPayload(
             hideUnreleasedContent = hideUnreleasedContent,
             hideCatalogUnderline = hideCatalogUnderline,
             useBuiltinCatalog = useBuiltinCatalog,
             useRecommendations = useRecommendations,
             items = items,
+            rowOrder = rowOrder,
         )
     }
 
@@ -551,7 +630,48 @@ object HomeCatalogSettingsRepository {
         // Adopt the TV-shared master toggles only when the remote row actually carries them.
         payload.useBuiltinCatalog?.let { useBuiltinCatalog = it }
         payload.useRecommendations?.let { useRecommendations = it }
-        if (payload.items.isNotEmpty()) {
+
+        if (payload.rowOrder.isNotEmpty()) {
+            // TV-authoritative format: rowOrder supersedes `items`.
+            // Process builtin and addon rows directly into preferences; reco rows are stashed
+            // in rowOrderRecoPrefs and applied later in syncRecoRows when /reco rows arrive.
+            val existingHeroState = preferences.mapValues { it.value.heroSourceEnabled }
+            val newPrefs = preferences.toMutableMap()
+            val newRecoPrefs = mutableMapOf<String, Pair<Int, Boolean>>()
+
+            payload.rowOrder.forEachIndexed { index, entry ->
+                when (entry.kind) {
+                    "builtin" -> {
+                        // Built-in catalog-addon key: "<manifest_id>:<type>:<catalog_id>"
+                        val key = "community.hamrocinema-catalog:${entry.type}:${entry.id}"
+                        newPrefs[key] = StoredHomeCatalogPreference(
+                            key = key,
+                            customTitle = newPrefs[key]?.customTitle.orEmpty(),
+                            enabled = entry.enabled,
+                            heroSourceEnabled = existingHeroState[key] ?: true,
+                            order = index,
+                        )
+                    }
+                    "reco" -> {
+                        // Reco rows are fetched dynamically from /reco; their actual keys
+                        // include a disambiguating index suffix (e.g. "personal_0"). Store the
+                        // TV order/enabled keyed by "${contentType}:${baseReasonType}" so
+                        // syncRecoRows() can match them when the rows arrive.
+                        val lookupKey = "${entry.type}:${entry.id}"
+                        newRecoPrefs[lookupKey] = Pair(index, entry.enabled)
+                    }
+                    "addon" -> {
+                        // Per-profile addon UUID: best-effort — skip if we can't reconstruct
+                        // the full "addonId:type:catalogId" key without a manifest lookup.
+                        // Addon ordering from the TV is rare and not critical for this fix.
+                    }
+                    // "collection" rows are owned by the mobile; skip to preserve local ordering.
+                }
+            }
+            rowOrderRecoPrefs = newRecoPrefs
+            preferences = newPrefs
+        } else if (payload.items.isNotEmpty()) {
+            // Legacy mobile format: items array (no reco rows, no rowOrder).
             val existingHeroState = preferences.mapValues { it.value.heroSourceEnabled }
             preferences = payload.items.associate { item ->
                 val key = if (item.isCollection) {

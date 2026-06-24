@@ -8,7 +8,6 @@ import com.nuvio.app.features.addons.AddonRepository
 import com.nuvio.app.features.addons.AddonsUiState
 import com.nuvio.app.features.addons.enabledAddons
 import com.nuvio.app.features.details.MetaDetails
-import com.nuvio.app.features.details.MetaDetailsRepository
 import com.nuvio.app.features.player.PlayerPlaybackSnapshot
 import com.nuvio.app.features.profiles.ProfileRepository
 import com.nuvio.app.features.trakt.TraktAuthRepository
@@ -32,6 +31,8 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -704,8 +705,12 @@ object WatchProgressRepository {
         entries: List<WatchProgressEntry>,
     ): RemoteMetadataResolutionResult {
         val (metaId, metaType) = key
+        // Private-backend fork: fetch meta directly from our backend instead of routing through
+        // MetaDetailsRepository, which may fall back to TMDB and overwrite our proxied image URLs
+        // (hamrocinema.regmig.com/image/...) with raw TMDB URLs that require an API key and load
+        // as dark/blank images in the continue-watching row.
         val meta = try {
-            MetaDetailsRepository.fetch(metaType, metaId)
+            com.nuvio.app.core.content.PrivateBackendContentSource.meta(metaType, metaId)
         } catch (error: CancellationException) {
             throw error
         } catch (_: Throwable) {
@@ -725,19 +730,29 @@ object WatchProgressRepository {
         val current = AddonRepository.uiState.value.metadataProviderReadiness()
         if (current.isReady) return current
 
-        // Wait up to 30 s for either AddonRepository or ContentSourceProvider to produce a
-        // provider with a meta resource. We can't rely on AddonRepository alone because the
-        // built-in backend catalog-addon lives in ContentSourceProvider and its arrival won't
-        // update AddonRepository.uiState — the contentAddonsFlow collector in our init{} block
-        // will kick retryMetadataResolution, but if we are already in awaitReadyMetadataProviders
-        // we need to loop here until one of the two sources is ready.
+        // Wait up to 30 s for EITHER AddonRepository OR ContentSourceProvider to produce a
+        // provider with a meta resource.
+        //
+        // Problem: with no user-managed addons (the typical case in this private-backend fork),
+        // AddonRepository has isRefreshing=false and empty addons immediately after init, so it
+        // is "settled without providers". We cannot use AddonRepository.uiState.first { ... }
+        // alone — it would return immediately with isSettledWithoutProviders=true, returning null
+        // here and aborting metadata resolution before the backend manifest is fetched.
+        //
+        // Fix: merge both flows. Each emission re-computes readiness (which merges
+        // ContentSourceProvider.cachedContentAddons into the provider list). We return as soon
+        // as either source produces providers with a meta resource.
+        val addonReadinessFlow = AddonRepository.uiState
+            .map { it.metadataProviderReadiness() }
+        val backendReadinessFlow = com.nuvio.app.core.content.ContentSourceProvider.contentAddonsFlow
+            .map { AddonRepository.uiState.value.metadataProviderReadiness() }
+
         val settled = withTimeoutOrNull(30_000L) {
-            AddonRepository.uiState.first { state ->
-                val readiness = state.metadataProviderReadiness()
-                readiness.isReady || readiness.isSettledWithoutProviders
-            }.metadataProviderReadiness()
+            merge(addonReadinessFlow, backendReadinessFlow).first { readiness ->
+                readiness.isReady
+            }
         }
-        return settled?.takeIf { it.isReady }
+        return settled
     }
 
     fun upsertPlaybackProgress(
