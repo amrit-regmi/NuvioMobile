@@ -6,6 +6,7 @@ import com.nuvio.app.core.auth.AuthState
 import com.nuvio.app.core.network.SupabaseProvider
 import com.nuvio.app.features.collection.CollectionMobileSettingsRepository
 import com.nuvio.app.features.collection.CollectionMobileSettingsStorage
+import com.nuvio.app.features.debrid.DebridProviders
 import com.nuvio.app.features.debrid.DebridSettingsRepository
 import com.nuvio.app.features.debrid.DebridSettingsStorage
 import com.nuvio.app.features.details.MetaScreenSettingsStorage
@@ -222,9 +223,23 @@ object ProfileSettingsSync {
                 ?.settingsJson
         }.getOrNull()
 
+        // Also write the TorBox key at the TOP LEVEL so the backend's stream handler
+        // (_resolve_user_torbox_key) can find it. The backend reads settings["streamOwnTorboxKey"]
+        // and settings["streamProvider"]; these are not inside the "features" blob.
+        // When the user has a personal key set: streamProvider="own", streamOwnTorboxKey=<key>.
+        // When blank: streamProvider="builtin" (use shared key), and clear the own key entry.
+        val torboxApiKey = DebridSettingsRepository.uiState.value
+            .providerApiKeys[DebridProviders.TORBOX_ID].orEmpty().trim()
+
         val merged = buildJsonObject {
             existing?.forEach { (key, value) -> put(key, value) }
             mobileBlobJson.forEach { (key, value) -> put(key, value) }
+            if (torboxApiKey.isNotBlank()) {
+                put("streamProvider", "own")
+                put("streamOwnTorboxKey", torboxApiKey)
+            } else {
+                put("streamProvider", "builtin")
+            }
         }
 
         val params = buildJsonObject {

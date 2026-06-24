@@ -157,10 +157,10 @@ object StreamsRepository {
         // Private-backend fork: streams come from OUR backend's catalog-addon
         // (Stremio `/stream/*`), not arbitrary installed Stremio addons. The stream-provider
         // master toggle (shared with TV via `nuvio_profile_settings.streamProvider`) gates it.
-        val installedAddons = if (
+        val streamProviderEnabled =
             com.nuvio.app.features.settings.BuiltInProvidersSettingsRepository.isStreamProviderEnabled()
-        ) {
-            com.nuvio.app.core.content.ContentSourceProvider.cachedContentAddons.enabledAddons()
+        val cachedAddons = if (streamProviderEnabled) {
+            com.nuvio.app.core.content.ContentSourceProvider.cachedContentAddons
         } else {
             emptyList()
         }
@@ -174,13 +174,22 @@ object StreamsRepository {
             groupByRepository = pluginUiState.groupStreamsByRepository,
         )
 
-        if (installedAddons.isEmpty() && pluginProviderGroups.isEmpty()) {
-            _uiState.value = StreamsUiState(
-                requestToken = requestToken,
-                isAnyLoading = false,
-                emptyStateReason = StreamsEmptyStateReason.NoAddonsInstalled,
-            )
-            return
+        // If the backend addon cache is empty (prime() hasn't run yet — e.g. app
+        // launched directly into a detail screen without visiting Home first),
+        // skip the early-return check and let the async job prime + re-resolve.
+        val cacheNeedsPrime = streamProviderEnabled && cachedAddons.isEmpty()
+
+        val installedAddons = cachedAddons.enabledAddons()
+
+        if (!cacheNeedsPrime) {
+            if (installedAddons.isEmpty() && pluginProviderGroups.isEmpty()) {
+                _uiState.value = StreamsUiState(
+                    requestToken = requestToken,
+                    isAnyLoading = false,
+                    emptyStateReason = StreamsEmptyStateReason.NoAddonsInstalled,
+                )
+                return
+            }
         }
 
         val streamAddons = installedAddons
@@ -201,56 +210,131 @@ object StreamsRepository {
                 )
             }
 
-        log.d { "Found ${streamAddons.size} addons for stream type=$type id=$videoId" }
+        log.d { "Found ${streamAddons.size} addons for stream type=$type id=$videoId (cacheNeedsPrime=$cacheNeedsPrime)" }
 
-        if (streamAddons.isEmpty() && pluginProviderGroups.isEmpty()) {
-            _uiState.value = StreamsUiState(
-                requestToken = requestToken,
-                isAnyLoading = false,
-                emptyStateReason = StreamsEmptyStateReason.NoCompatibleAddons,
-            )
-            return
+        if (!cacheNeedsPrime) {
+            if (streamAddons.isEmpty() && pluginProviderGroups.isEmpty()) {
+                _uiState.value = StreamsUiState(
+                    requestToken = requestToken,
+                    isAnyLoading = false,
+                    emptyStateReason = StreamsEmptyStateReason.NoCompatibleAddons,
+                )
+                return
+            }
         }
 
-        // Initialise loading placeholders
-        val installedAddonOrder = streamAddons.map { it.addonName }
-        val initialGroups = StreamAutoPlaySelector.orderAddonStreams(streamAddons.map { addon ->
-            AddonStreamGroup(
-                addonName = addon.addonName,
-                addonId = addon.addonId,
-                streams = emptyList(),
-                isLoading = true,
+        // If the cache has already been loaded, set up loading placeholders immediately.
+        // If we still need to prime, show a generic loading state and let the job do it.
+        var resolvedStreamAddons = streamAddons
+        var resolvedInstalledAddonOrder = streamAddons.map { it.addonName }
+
+        if (!cacheNeedsPrime) {
+            val initialGroups = StreamAutoPlaySelector.orderAddonStreams(resolvedStreamAddons.map { addon ->
+                AddonStreamGroup(
+                    addonName = addon.addonName,
+                    addonId = addon.addonId,
+                    streams = emptyList(),
+                    isLoading = true,
+                )
+            } + pluginProviderGroups.map { providerGroup ->
+                AddonStreamGroup(
+                    addonName = providerGroup.addonName,
+                    addonId = providerGroup.addonId,
+                    streams = emptyList(),
+                    isLoading = true,
+                )
+            }, resolvedInstalledAddonOrder)
+            val isInitiallyLoading = initialGroups.any { it.isLoading }
+            _uiState.value = StreamsUiState(
+                requestToken = requestToken,
+                groups = initialGroups,
+                activeAddonIds = initialGroups.map { it.addonId }.toSet(),
+                isAnyLoading = isInitiallyLoading,
+                emptyStateReason = null,
+                isDirectAutoPlayFlow = isDirectAutoPlayFlow,
+                showDirectAutoPlayOverlay = isDirectAutoPlayFlow,
             )
-        } + pluginProviderGroups.map { providerGroup ->
-            AddonStreamGroup(
-                addonName = providerGroup.addonName,
-                addonId = providerGroup.addonId,
-                streams = emptyList(),
-                isLoading = true,
-            )
-        }, installedAddonOrder)
-        val isInitiallyLoading = initialGroups.any { it.isLoading }
-        _uiState.value = StreamsUiState(
-            requestToken = requestToken,
-            groups = initialGroups,
-            activeAddonIds = initialGroups.map { it.addonId }.toSet(),
-            isAnyLoading = isInitiallyLoading,
-            emptyStateReason = null,
-            isDirectAutoPlayFlow = isDirectAutoPlayFlow,
-            showDirectAutoPlayOverlay = isDirectAutoPlayFlow,
-        )
+        }
+        // else: _uiState already set above with requestToken + isDirectAutoPlayFlow,
+        // the job will update it once prime() completes.
 
         activeJob = scope.launch {
+            // Prime the backend content addon cache if it wasn't already populated
+            // (e.g. user navigated directly to a detail screen without visiting Home first).
+            if (cacheNeedsPrime) {
+                log.d { "Backend addon cache empty — priming before stream fetch" }
+                com.nuvio.app.core.content.ContentSourceProvider.prime()
+                val primedAddons = if (streamProviderEnabled) {
+                    com.nuvio.app.core.content.ContentSourceProvider.cachedContentAddons.enabledAddons()
+                } else {
+                    emptyList()
+                }
+                resolvedStreamAddons = primedAddons
+                    .mapNotNull { addon ->
+                        val manifest = addon.manifest ?: return@mapNotNull null
+                        val supportsRequestedStream = manifest.resources.any { resource ->
+                            resource.name == "stream" &&
+                                resource.types.contains(type) &&
+                                (resource.idPrefixes.isEmpty() ||
+                                    resource.idPrefixes.any { videoId.startsWith(it) })
+                        }
+                        if (!supportsRequestedStream) return@mapNotNull null
+                        InstalledStreamAddonTarget(
+                            addonName = addon.displayTitle.ifBlank { manifest.name },
+                            addonId = addon.streamAddonInstanceId(manifest.id),
+                            manifest = manifest,
+                        )
+                    }
+                resolvedInstalledAddonOrder = resolvedStreamAddons.map { it.addonName }
+
+                if (resolvedStreamAddons.isEmpty() && pluginProviderGroups.isEmpty()) {
+                    _uiState.value = StreamsUiState(
+                        requestToken = requestToken,
+                        isAnyLoading = false,
+                        emptyStateReason = StreamsEmptyStateReason.NoAddonsInstalled,
+                    )
+                    return@launch
+                }
+
+                // Now set loading placeholders (deferred because we needed prime first).
+                val primedInitialGroups = StreamAutoPlaySelector.orderAddonStreams(
+                    resolvedStreamAddons.map { addon ->
+                        AddonStreamGroup(
+                            addonName = addon.addonName,
+                            addonId = addon.addonId,
+                            streams = emptyList(),
+                            isLoading = true,
+                        )
+                    } + pluginProviderGroups.map { providerGroup ->
+                        AddonStreamGroup(
+                            addonName = providerGroup.addonName,
+                            addonId = providerGroup.addonId,
+                            streams = emptyList(),
+                            isLoading = true,
+                        )
+                    }, resolvedInstalledAddonOrder,
+                )
+                _uiState.value = StreamsUiState(
+                    requestToken = requestToken,
+                    groups = primedInitialGroups,
+                    activeAddonIds = primedInitialGroups.map { it.addonId }.toSet(),
+                    isAnyLoading = primedInitialGroups.any { it.isLoading },
+                    emptyStateReason = null,
+                    isDirectAutoPlayFlow = isDirectAutoPlayFlow,
+                    showDirectAutoPlayOverlay = isDirectAutoPlayFlow,
+                )
+            }
+
             val completions = Channel<StreamLoadCompletion>(capacity = Channel.BUFFERED)
             val pluginRemainingByAddonId = pluginProviderGroups
                 .associate { it.addonId to it.scrapers.size }
                 .toMutableMap()
             val pluginFirstErrorByAddonId = mutableMapOf<String, String>()
-            val totalTasks = streamAddons.size +
+            val totalTasks = resolvedStreamAddons.size +
                 pluginProviderGroups.sumOf { it.scrapers.size }
 
-            val installedAddonNames = installedAddonOrder.toSet()
-            val installedAddonIds = streamAddons.map { it.addonId }.toSet()
+            val installedAddonNames = resolvedInstalledAddonOrder.toSet()
+            val installedAddonIds = resolvedStreamAddons.map { it.addonId }.toSet()
             val debridAvailabilityJobs = mutableListOf<Job>()
             var autoSelectTriggered = false
             var timeoutElapsed = false
@@ -276,7 +360,7 @@ object StreamsRepository {
                         groups = current.groups.map { currentGroup ->
                             if (currentGroup.addonId == group.addonId) group else currentGroup
                         },
-                        installedOrder = installedAddonOrder,
+                        installedOrder = resolvedInstalledAddonOrder,
                     )
                     val anyLoading = updated.any { it.isLoading }
                     current.copy(
@@ -449,7 +533,7 @@ object StreamsRepository {
                 videoId
             }
 
-            streamAddons.forEach { addon ->
+            resolvedStreamAddons.forEach { addon ->
                 launch {
                     val url = buildAddonResourceUrl(
                         manifestUrl = addon.manifest.transportUrl,
@@ -573,7 +657,7 @@ object StreamsRepository {
                                         )
                                     }
                                 },
-                                installedOrder = installedAddonOrder,
+                                installedOrder = resolvedInstalledAddonOrder,
                             )
                             val anyLoading = updated.any { it.isLoading }
                             current.copy(

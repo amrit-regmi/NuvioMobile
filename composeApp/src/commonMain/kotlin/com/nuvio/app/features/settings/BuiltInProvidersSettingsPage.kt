@@ -33,6 +33,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.core.auth.AuthRepository
 import com.nuvio.app.core.network.PrivateBackend
+import com.nuvio.app.features.debrid.DebridProviders
+import com.nuvio.app.features.debrid.DebridSettingsRepository
 import com.nuvio.app.features.home.HomeCatalogSettingsRepository
 import kotlinx.coroutines.launch
 import nuvio.composeapp.generated.resources.Res
@@ -60,7 +62,6 @@ import org.jetbrains.compose.resources.stringResource
 
 internal fun LazyListScope.builtInProvidersSettingsContent(
     isTablet: Boolean,
-    onDebridClick: () -> Unit = {},
 ) {
     // ── Providers (the 3+1 toggles) ────────────────────────────────────────────
     item {
@@ -72,6 +73,7 @@ internal fun LazyListScope.builtInProvidersSettingsContent(
             BuiltInProvidersSettingsRepository.ensureLoaded()
             BuiltInProvidersSettingsRepository.uiState
         }.collectAsStateWithLifecycle()
+        var showTorboxDialog by rememberSaveable { mutableStateOf(false) }
 
         SettingsSection(
             title = stringResource(Res.string.settings_builtin_providers_section_providers),
@@ -115,9 +117,15 @@ internal fun LazyListScope.builtInProvidersSettingsContent(
                     description = "Provides streams via TorBox debrid. Add your personal key or leave blank to use the shared key.",
                     icon = Icons.Rounded.CloudDownload,
                     isTablet = isTablet,
-                    onClick = onDebridClick,
+                    onClick = { showTorboxDialog = true },
                 )
             }
+        }
+
+        if (showTorboxDialog) {
+            TorboxKeyDialog(
+                onDismiss = { showTorboxDialog = false },
+            )
         }
     }
 
@@ -307,6 +315,71 @@ private fun BackendChangedLogoutDialog(
                         onConfirm()
                     }) {
                         Text(stringResource(Res.string.settings_builtin_backend_logout_confirm))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+@OptIn(ExperimentalMaterial3Api::class)
+private fun TorboxKeyDialog(
+    onDismiss: () -> Unit,
+) {
+    val currentKey = remember {
+        DebridSettingsRepository.ensureLoaded()
+        DebridSettingsRepository.uiState.value.providerApiKeys[DebridProviders.TORBOX_ID].orEmpty()
+    }
+    var draft by rememberSaveable(currentKey) { mutableStateOf(currentKey) }
+
+    BasicAlertDialog(onDismissRequest = onDismiss) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surface,
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(
+                    text = "TorBox API Key",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = "Enter your personal TorBox API key, or leave blank to use the shared key.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = draft,
+                    onValueChange = { draft = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.75f),
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.42f),
+                        focusedContainerColor = MaterialTheme.colorScheme.surface,
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                        disabledContainerColor = MaterialTheme.colorScheme.surface,
+                    ),
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text(stringResource(Res.string.action_cancel))
+                    }
+                    Button(onClick = {
+                        DebridSettingsRepository.setTorboxApiKey(draft.trim())
+                        onDismiss()
+                    }) {
+                        Text(stringResource(Res.string.action_save))
                     }
                 }
             }
