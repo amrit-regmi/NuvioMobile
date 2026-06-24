@@ -160,9 +160,14 @@ object StreamsRepository {
         val streamProviderEnabled =
             com.nuvio.app.features.settings.BuiltInProvidersSettingsRepository.isStreamProviderEnabled()
         val cachedAddons = if (streamProviderEnabled) {
-            com.nuvio.app.core.content.ContentSourceProvider.cachedContentAddons
+            // Include both the private backend catalog-addon AND any user-installed third-party
+            // Stremio addons. AddonRepository already excludes the backend URL (isBackendManagedAddonUrl)
+            // so there is no duplication risk.
+            com.nuvio.app.core.content.ContentSourceProvider.cachedContentAddons +
+                AddonRepository.uiState.value.addons
         } else {
-            emptyList()
+            // Even when the built-in stream provider is off, still serve third-party addon streams.
+            AddonRepository.uiState.value.addons
         }
         val pluginScrapers = if (AppFeaturePolicy.pluginsEnabled) {
             PluginRepository.getEnabledScrapersForType(type)
@@ -174,10 +179,12 @@ object StreamsRepository {
             groupByRepository = pluginUiState.groupStreamsByRepository,
         )
 
-        // If the backend addon cache is empty (prime() hasn't run yet — e.g. app
+        // If the backend catalog-addon cache is empty (prime() hasn't run yet — e.g. app
         // launched directly into a detail screen without visiting Home first),
-        // skip the early-return check and let the async job prime + re-resolve.
-        val cacheNeedsPrime = streamProviderEnabled && cachedAddons.isEmpty()
+        // let the async job prime it and re-resolve. Third-party addons (from AddonRepository)
+        // are always immediately available and do NOT require priming.
+        val cacheNeedsPrime = streamProviderEnabled &&
+            com.nuvio.app.core.content.ContentSourceProvider.cachedContentAddons.isEmpty()
 
         val installedAddons = cachedAddons.enabledAddons()
 
@@ -265,10 +272,12 @@ object StreamsRepository {
                 log.d { "Backend addon cache empty — priming before stream fetch" }
                 com.nuvio.app.core.content.ContentSourceProvider.prime()
                 val primedAddons = if (streamProviderEnabled) {
-                    com.nuvio.app.core.content.ContentSourceProvider.cachedContentAddons.enabledAddons()
+                    // After priming the backend addon, combine it with third-party addons.
+                    com.nuvio.app.core.content.ContentSourceProvider.cachedContentAddons +
+                        AddonRepository.uiState.value.addons
                 } else {
-                    emptyList()
-                }
+                    AddonRepository.uiState.value.addons
+                }.enabledAddons()
                 resolvedStreamAddons = primedAddons
                     .mapNotNull { addon ->
                         val manifest = addon.manifest ?: return@mapNotNull null

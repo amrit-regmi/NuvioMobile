@@ -96,7 +96,14 @@ object RecommendationService {
         return rows.mapIndexedNotNull { index, element ->
             val obj = element.jsonObject
             val label = obj.str("label")?.takeIf { it.isNotBlank() } ?: return@mapIndexedNotNull null
-            val reasonType = obj.str("reason_type") ?: "personal"
+            val rawReasonType = obj.str("reason_type") ?: "personal"
+            // Mirror the TV's _RECO_REASON_TO_DASHBOARD_ID mapping so our keys
+            // match the ids written to rowOrder by the TV app.
+            val reasonType = when (rawReasonType) {
+                "watched_title" -> "because_watched"
+                "keyword_theme" -> "genre_theme"
+                else -> rawReasonType
+            }
             val contentType = obj.str("content_type")
             val items = obj["items"]?.jsonArray
                 ?.mapNotNull { it.jsonObject.toMetaPreview() }

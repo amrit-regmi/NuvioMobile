@@ -645,12 +645,14 @@ object HomeCatalogSettingsRepository {
             val existingHeroState = preferences.mapValues { it.value.heroSourceEnabled }
             val newPrefs = preferences.toMutableMap()
             val newRecoPrefs = mutableMapOf<String, Pair<Int, Boolean>>()
+            val seenBuiltinKeys = mutableSetOf<String>()
 
             payload.rowOrder.forEachIndexed { index, entry ->
                 when (entry.kind) {
                     "builtin" -> {
                         // Built-in catalog-addon key: "<manifest_id>:<type>:<catalog_id>"
                         val key = "community.hamrocinema-catalog:${entry.type}:${entry.id}"
+                        seenBuiltinKeys.add(key)
                         newPrefs[key] = StoredHomeCatalogPreference(
                             key = key,
                             customTitle = newPrefs[key]?.customTitle.orEmpty(),
@@ -675,6 +677,20 @@ object HomeCatalogSettingsRepository {
                     // "collection" rows are owned by the mobile; skip to preserve local ordering.
                 }
             }
+
+            // TV is the authority for builtin rows. Any builtin row NOT present in the TV's
+            // rowOrder must be disabled — it may have been hidden for this profile (e.g. kids
+            // profile hides new_releases/movie). Without this, stale enabled=true preferences
+            // from other profiles bleed through after a profile switch.
+            newPrefs.keys
+                .filter { it.startsWith("community.hamrocinema-catalog:") && it !in seenBuiltinKeys }
+                .forEach { key ->
+                    val existing = newPrefs[key]
+                    if (existing != null && existing.enabled) {
+                        newPrefs[key] = existing.copy(enabled = false)
+                    }
+                }
+
             rowOrderRecoPrefs = newRecoPrefs
             preferences = newPrefs
             // Re-apply rowOrder filtering to already-loaded reco rows so the race between

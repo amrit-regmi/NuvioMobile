@@ -859,6 +859,7 @@ internal fun StreamList(
     val hasAnyStreams = filteredGroups.any { it.streams.isNotEmpty() }
     val anyLoading = filteredGroups.any { it.isLoading }
     val torrentNotSupportedText = stringResource(Res.string.streams_torrent_not_supported)
+    val debridRequiredText = stringResource(Res.string.streams_debrid_required)
     val streamBadgeSettings by remember {
         StreamBadgeSettingsRepository.ensureLoaded()
         StreamBadgeSettingsRepository.uiState
@@ -897,6 +898,7 @@ internal fun StreamList(
                         showAddonLogo = streamBadgeSettings.showAddonLogo,
                         badgePlacement = streamBadgeSettings.badgePlacement,
                         torrentNotSupportedText = torrentNotSupportedText,
+                        debridRequiredText = debridRequiredText,
                         onStreamSelected = onStreamSelected,
                         onStreamLongPress = onStreamLongPress,
                         resumePositionMs = resumePositionMs,
@@ -926,6 +928,7 @@ private fun LazyListScope.streamSection(
     showAddonLogo: Boolean,
     badgePlacement: StreamBadgePlacement,
     torrentNotSupportedText: String,
+    debridRequiredText: String,
     onStreamSelected: (stream: StreamItem, resumePositionMs: Long?, resumeProgressFraction: Float?) -> Unit,
     onStreamLongPress: (StreamItem) -> Unit,
     resumePositionMs: Long?,
@@ -972,6 +975,9 @@ private fun LazyListScope.streamSection(
                 stream.needsLocalDebridResolve &&
                     !AppFeaturePolicy.p2pEnabled &&
                     !(debridEnabled && stream.isAddonDebridCandidate)
+            // This stream could be played via debrid but the user hasn't connected a debrid
+            // provider (or hasn't enabled it). Show a helpful prompt instead of a silent no-op.
+            val isDebridRequired = isUnsupportedTorrentStream && stream.isAddonDebridCandidate
             StreamCard(
                 stream = stream,
                 enabled = isSelectable || isUnsupportedTorrentStream,
@@ -982,6 +988,8 @@ private fun LazyListScope.streamSection(
                 onClick = {
                     if (isSelectable) {
                         onStreamSelected(stream, resumePositionMs, resumeProgressFraction)
+                    } else if (isDebridRequired) {
+                        NuvioToastController.show(debridRequiredText)
                     } else if (isUnsupportedTorrentStream) {
                         NuvioToastController.show(torrentNotSupportedText)
                     }
