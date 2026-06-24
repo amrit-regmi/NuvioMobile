@@ -98,11 +98,15 @@ fun SearchScreen(
 
     LaunchedEffect(Unit) {
         AddonRepository.initialize()
+        // Private-backend fork: search/discover run against OUR backend's catalog-addon.
+        com.nuvio.app.core.content.ContentSourceProvider.prime()
         WatchedRepository.ensureLoaded()
         SearchHistoryRepository.ensureLoaded()
     }
 
     val addonsUiState by AddonRepository.uiState.collectAsStateWithLifecycle()
+    val contentAddons by com.nuvio.app.core.content.ContentSourceProvider
+        .contentAddonsFlow.collectAsStateWithLifecycle()
     val uiState by SearchRepository.uiState.collectAsStateWithLifecycle()
     val discoverUiState by SearchRepository.discoverUiState.collectAsStateWithLifecycle()
     val homeCatalogSettingsUiState by remember {
@@ -128,8 +132,8 @@ fun SearchScreen(
         }
     }
 
-    val addonRefreshKey = remember(addonsUiState.addons) {
-        addonsUiState.addons.enabledAddons().mapNotNull { addon ->
+    val addonRefreshKey = remember(contentAddons) {
+        contentAddons.enabledAddons().mapNotNull { addon ->
             val manifest = addon.manifest ?: return@mapNotNull null
             buildString {
                 append(manifest.transportUrl)
@@ -151,7 +155,7 @@ fun SearchScreen(
     }
 
     LaunchedEffect(addonRefreshKey, homeCatalogSettingsUiState.hideUnreleasedContent) {
-        SearchRepository.refreshDiscover(addonsUiState.addons)
+        SearchRepository.refreshDiscover(contentAddons)
     }
 
     LaunchedEffect(query, addonRefreshKey, homeCatalogSettingsUiState.hideUnreleasedContent) {
@@ -164,7 +168,7 @@ fun SearchScreen(
             lastRequestedQuery = normalizedQuery
             SearchRepository.search(
                 query = normalizedQuery,
-                addons = addonsUiState.addons,
+                addons = contentAddons,
             )
         }
     }
@@ -206,11 +210,11 @@ fun SearchScreen(
 
                 val normalizedQuery = query.trim()
                 if (normalizedQuery.isBlank()) {
-                    SearchRepository.refreshDiscover(addonsUiState.addons)
+                    SearchRepository.refreshDiscover(contentAddons)
                 } else {
                     SearchRepository.search(
                         query = normalizedQuery,
-                        addons = addonsUiState.addons,
+                        addons = contentAddons,
                     )
                 }
             }
@@ -302,7 +306,7 @@ fun SearchScreen(
                     onGenreSelected = SearchRepository::selectDiscoverGenre,
                     onRetry = {
                         NetworkStatusRepository.requestRefresh(force = true)
-                        SearchRepository.refreshDiscover(addonsUiState.addons)
+                        SearchRepository.refreshDiscover(contentAddons)
                     },
                     watchedKeys = watchedUiState.watchedKeys,
                     onPosterClick = onPosterClick,
@@ -341,7 +345,7 @@ fun SearchScreen(
                                         NetworkStatusRepository.requestRefresh(force = true)
                                         SearchRepository.search(
                                             query = normalizedQuery,
-                                            addons = addonsUiState.addons,
+                                            addons = contentAddons,
                                         )
                                     }
                                 },

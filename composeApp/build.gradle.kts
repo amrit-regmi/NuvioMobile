@@ -11,6 +11,15 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompilationTask
 import java.util.Properties
 
+// Private-backend fork defaults. These point the app at our self-hosted
+// hamrocinema instance when no local.properties / env override is supplied.
+// Supabase anon keys are public-by-design, so baking the default here mirrors
+// how the NuvioTV fork bakes its built-in backend URL.
+val PRIVATE_BACKEND_SUPABASE_URL = "https://hamrocinema.regmig.com"
+val PRIVATE_BACKEND_SUPABASE_ANON_KEY =
+    "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im51dmlvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAzMzE1NTUsImV4cCI6MjA5NTY5MTU1NX0.btJTiYxStG0rq3xN48rLpRt3MBqu7ybgSvxqRiFiWEM"
+val PRIVATE_BACKEND_FASTAPI_BASE_URL = "https://hamrocinema.regmig.com"
+
 abstract class GenerateRuntimeConfigsTask : DefaultTask() {
     @get:OutputDirectory
     abstract val outputDir: DirectoryProperty
@@ -40,6 +49,9 @@ abstract class GenerateRuntimeConfigsTask : DefaultTask() {
     @get:Input
     abstract val syncBackendManifestUrl: Property<String>
 
+    @get:Input
+    abstract val fastApiBaseUrl: Property<String>
+
     @TaskAction
     fun generate() {
         val props = Properties()
@@ -66,6 +78,21 @@ abstract class GenerateRuntimeConfigsTask : DefaultTask() {
                 |
                 |object SyncBackendBootstrapConfig {
                 |    const val SWITCH_MANIFEST_URL = "${syncBackendManifestUrl.get()}"
+                |}
+                """.trimMargin()
+            )
+            resolve("PrivateBackendConfig.kt").writeText(
+                """
+                |package com.nuvio.app.core.network
+                |
+                |/**
+                | * Baked-in default base URL of our private FastAPI backend
+                | * (taste-engine, served via hamrocinema.regmig.com). The effective
+                | * base used at runtime is resolved by [PrivateBackend] which applies
+                | * any persisted user override on top of this default.
+                | */
+                |object PrivateBackendConfig {
+                |    const val FASTAPI_BASE_URL = "${fastApiBaseUrl.get()}"
                 |}
                 """.trimMargin()
             )
@@ -261,11 +288,16 @@ val generateRuntimeConfigs = tasks.register<GenerateRuntimeConfigsTask>("generat
     localPropertiesFile.set(rootProject.layout.projectDirectory.file("local.properties"))
     appVersionName.set(releaseAppVersionName)
     appVersionCode.set(releaseAppVersionCode)
-    supabaseUrl.set(runtimeConfigValue("SUPABASE_URL"))
-    supabaseAnonKey.set(runtimeConfigValue("SUPABASE_ANON_KEY"))
-    nuvioSupabaseUrl.set(runtimeConfigValue("NUVIO_SUPABASE_URL"))
-    nuvioSupabaseAnonKey.set(runtimeConfigValue("NUVIO_SUPABASE_ANON_KEY"))
+    // Private-backend fork: default Supabase + FastAPI point at our self-hosted
+    // hamrocinema instance. The Supabase anon key is public-by-design (like the TV
+    // fork bakes its default URL), so committing the URL + anon key as fallbacks is
+    // acceptable. A local.properties / env override still wins if present.
+    supabaseUrl.set(runtimeConfigValue("SUPABASE_URL", PRIVATE_BACKEND_SUPABASE_URL))
+    supabaseAnonKey.set(runtimeConfigValue("SUPABASE_ANON_KEY", PRIVATE_BACKEND_SUPABASE_ANON_KEY))
+    nuvioSupabaseUrl.set(runtimeConfigValue("NUVIO_SUPABASE_URL", PRIVATE_BACKEND_SUPABASE_URL))
+    nuvioSupabaseAnonKey.set(runtimeConfigValue("NUVIO_SUPABASE_ANON_KEY", PRIVATE_BACKEND_SUPABASE_ANON_KEY))
     syncBackendManifestUrl.set(runtimeConfigValue("SYNC_BACKEND_MANIFEST_URL"))
+    fastApiBaseUrl.set(runtimeConfigValue("FASTAPI_BASE_URL", PRIVATE_BACKEND_FASTAPI_BASE_URL))
 }
 
 tasks.withType<KotlinCompilationTask<*>>().configureEach {

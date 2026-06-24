@@ -80,10 +80,21 @@ private val addonHttpClient = HttpClient(Darwin) {
     expectSuccess = false
 }
 
+// Private-backend fork: host-matched Supabase Bearer (mirrors NuvioTV's
+// RecoAuthInterceptor). Only attached for our backend host, and never overrides a
+// caller-supplied Authorization header.
+private fun com.nuvio.app.core.network.BackendAuth.headersToApply(
+    url: String,
+    existing: Map<String, String>,
+): Map<String, String> =
+    authHeadersFor(url).filterKeys { key -> existing.keys.none { it.equals(key, ignoreCase = true) } }
+
 actual suspend fun httpGetText(url: String): String =
     addonHttpClient
         .get(url) {
             accept(ContentType.Application.Json)
+            com.nuvio.app.core.network.BackendAuth.headersToApply(url, emptyMap())
+                .forEach { (key, value) -> header(key, value) }
         }
         .let { response ->
             val payload = response.bodyAsText()
@@ -101,6 +112,8 @@ actual suspend fun httpPostJson(url: String, body: String): String =
         .post(url) {
             accept(ContentType.Application.Json)
             header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+            com.nuvio.app.core.network.BackendAuth.headersToApply(url, emptyMap())
+                .forEach { (key, value) -> header(key, value) }
             setBody(body)
         }
         .let { response ->
@@ -121,6 +134,8 @@ actual suspend fun httpGetTextWithHeaders(
     addonHttpClient
         .get(url) {
             accept(ContentType.Application.Json)
+            com.nuvio.app.core.network.BackendAuth.headersToApply(url, headers)
+                .forEach { (key, value) -> header(key, value) }
             headers.forEach { (key, value) ->
                 header(key, value)
             }
@@ -145,6 +160,8 @@ actual suspend fun httpPostJsonWithHeaders(
         .post(url) {
             accept(ContentType.Application.Json)
             header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+            com.nuvio.app.core.network.BackendAuth.headersToApply(url, headers)
+                .forEach { (key, value) -> header(key, value) }
             headers.forEach { (key, value) ->
                 header(key, value)
             }
@@ -172,6 +189,8 @@ actual suspend fun httpRequestRaw(
         .request {
             url(url)
             this.method = HttpMethod.parse(method.uppercase())
+            com.nuvio.app.core.network.BackendAuth.headersToApply(url, headers)
+                .forEach { (key, value) -> header(key, value) }
             headers.forEach { (key, value) ->
                 header(key, value)
             }

@@ -154,7 +154,10 @@ object StreamsRepository {
             return
         }
 
-        val installedAddons = AddonRepository.uiState.value.addons.enabledAddons()
+        // Private-backend fork: streams come from OUR backend's catalog-addon
+        // (Stremio `/stream/*`), not arbitrary installed Stremio addons.
+        val installedAddons = com.nuvio.app.core.content.ContentSourceProvider.cachedContentAddons
+            .enabledAddons()
         val pluginScrapers = if (AppFeaturePolicy.pluginsEnabled) {
             PluginRepository.getEnabledScrapersForType(type)
         } else {

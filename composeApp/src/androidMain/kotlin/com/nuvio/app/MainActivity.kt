@@ -68,6 +68,10 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         window.setBackgroundDrawableResource(R.color.nuvio_background)
         AddonStorage.initialize(applicationContext)
+        // Private-backend fork: resolve our FastAPI base URL (default + any persisted
+        // user override) once at startup, before any content client is built.
+        com.nuvio.app.core.network.PrivateBackendUrlStorage.initialize(applicationContext)
+        com.nuvio.app.core.network.PrivateBackend.init()
         AuthStorage.initialize(applicationContext)
         SyncBackendStorage.initialize(applicationContext)
         LibraryStorage.initialize(applicationContext)

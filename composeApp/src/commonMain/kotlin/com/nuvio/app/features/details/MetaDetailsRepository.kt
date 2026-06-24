@@ -270,7 +270,9 @@ object MetaDetailsRepository {
     }
 
     private fun findMetaManifests(type: String, id: String): List<AddonManifest> =
-        AddonRepository.uiState.value.addons
+        // Private-backend fork: meta resolves from OUR backend's catalog-addon, not
+        // arbitrary installed Stremio addons.
+        com.nuvio.app.core.content.ContentSourceProvider.cachedContentAddons
             .enabledAddons()
             .mapNotNull { it.manifest }
             .filter { manifest ->

@@ -106,6 +106,9 @@ fun HomeScreen(
 ) {
     LaunchedEffect(Unit) {
         AddonRepository.initialize()
+        // Private-backend fork: load OUR backend's catalog-addon so home content
+        // resolves through the FastAPI backend instead of installed Stremio addons.
+        com.nuvio.app.core.content.ContentSourceProvider.prime()
         CollectionRepository.initialize()
         ContinueWatchingPreferencesRepository.ensureLoaded()
         WatchedRepository.ensureLoaded()
@@ -113,6 +116,9 @@ fun HomeScreen(
     }
 
     val addonsUiState by AddonRepository.uiState.collectAsStateWithLifecycle()
+    // Content addons come from our private backend, NOT the installed-addon list.
+    val contentAddons by com.nuvio.app.core.content.ContentSourceProvider
+        .contentAddonsFlow.collectAsStateWithLifecycle()
     val homeUiState by HomeRepository.uiState.collectAsStateWithLifecycle()
     val homeSettingsUiState by remember {
         HomeCatalogSettingsRepository.snapshot()
@@ -152,7 +158,7 @@ fun HomeScreen(
             NetworkCondition.Online -> {
                 if (observedOfflineState) {
                     observedOfflineState = false
-                    HomeRepository.refresh(addonsUiState.addons.enabledAddons(), force = true)
+                    HomeRepository.refresh(contentAddons.enabledAddons(), force = true)
                 }
             }
 
@@ -416,8 +422,8 @@ fun HomeScreen(
             cloudLibraryUiState = cloudLibraryUiState,
         )
     }
-    val enabledAddons = remember(addonsUiState.addons) {
-        addonsUiState.addons.enabledAddons()
+    val enabledAddons = remember(contentAddons) {
+        contentAddons.enabledAddons()
     }
     val isRefreshingEnabledAddons = remember(enabledAddons) {
         enabledAddons.any { addon -> addon.isRefreshing }
@@ -803,7 +809,7 @@ fun HomeScreen(
                                 modifier = Modifier.padding(horizontal = 16.dp),
                                 onRetry = {
                                     NetworkStatusRepository.requestRefresh(force = true)
-                                    HomeRepository.refresh(addonsUiState.addons.enabledAddons(), force = true)
+                                    HomeRepository.refresh(contentAddons.enabledAddons(), force = true)
                                 },
                             )
                         } else {

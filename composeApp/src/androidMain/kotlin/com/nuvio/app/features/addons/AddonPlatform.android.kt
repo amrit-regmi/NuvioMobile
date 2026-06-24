@@ -168,7 +168,12 @@ private suspend fun executeTextRequest(
     body: String = "",
 ): String = withContext(Dispatchers.IO) {
     val normalizedMethod = method.uppercase()
-    val sanitizedHeaders = headers.withoutAcceptEncoding()
+    // Private-backend fork: host-matched Supabase Bearer (mirrors NuvioTV's
+    // RecoAuthInterceptor). Only attached for our backend host, and never overrides
+    // a caller-supplied Authorization header.
+    val authHeaders = com.nuvio.app.core.network.BackendAuth.authHeadersFor(url)
+        .filterKeys { key -> headers.keys.none { it.equals(key, ignoreCase = true) } }
+    val sanitizedHeaders = (authHeaders + headers).withoutAcceptEncoding()
     val builder = Request.Builder().url(url)
     sanitizedHeaders.forEach { (key, value) ->
         builder.header(key, value)
@@ -248,7 +253,9 @@ actual suspend fun httpRequestRaw(
 ): RawHttpResponse =
     withContext(Dispatchers.IO) {
         val normalizedMethod = method.uppercase()
-        val sanitizedHeaders = headers.withoutAcceptEncoding()
+        val authHeaders = com.nuvio.app.core.network.BackendAuth.authHeadersFor(url)
+            .filterKeys { key -> headers.keys.none { it.equals(key, ignoreCase = true) } }
+        val sanitizedHeaders = (authHeaders + headers).withoutAcceptEncoding()
         val builder = Request.Builder().url(url)
         sanitizedHeaders.forEach { (key, value) ->
             builder.header(key, value)
