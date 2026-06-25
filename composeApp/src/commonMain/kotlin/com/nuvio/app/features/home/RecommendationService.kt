@@ -104,7 +104,10 @@ object RecommendationService {
                 "keyword_theme" -> "genre_theme"
                 else -> rawReasonType
             }
-            val contentType = obj.str("content_type")
+            val contentType = when (obj.str("content_type")) {
+                "tv", "tvshow", "show" -> "series"
+                else -> obj.str("content_type")
+            }
             val items = obj["items"]?.jsonArray
                 ?.mapNotNull { it.jsonObject.toMetaPreview() }
                 .orEmpty()
