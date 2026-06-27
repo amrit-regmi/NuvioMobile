@@ -16,4 +16,7 @@ expect object AppFeaturePolicy {
     val inAppUpdaterEnabled: Boolean
     val imdbRatingLogoEnabled: Boolean
     val debugBackendSwitcherEnabled: Boolean
+    // TorBox-only product model: Trakt is not offered. Gates all Trakt runtime paths
+    // (auth, scrobble, library source, watch progress, list picker). See TraktAuthRepository.
+    val traktEnabled: Boolean
 }

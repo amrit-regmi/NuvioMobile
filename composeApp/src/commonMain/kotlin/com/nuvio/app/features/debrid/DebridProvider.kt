@@ -35,7 +35,9 @@ object DebridProviders {
         id = TORBOX_ID,
         displayName = "Torbox",
         shortName = "TB",
-        authMethod = DebridProviderAuthMethod.DeviceCode,
+        // TorBox-only product model: users bring their own TorBox API key (or use the
+        // backend-provided key). API-key entry only — device-code auth UI is not offered.
+        authMethod = DebridProviderAuthMethod.ApiKey,
         capabilities = setOf(
             DebridProviderCapability.ClientResolve,
             DebridProviderCapability.LocalTorrentCacheCheck,
@@ -65,7 +67,10 @@ object DebridProviders {
         capabilities = setOf(DebridProviderCapability.ClientResolve),
     )
 
-    private val registered = listOf(Torbox, Premiumize, RealDebrid)
+    // TorBox-only product model. Premiumize/RealDebrid definitions are retained below for
+    // source compatibility (referenced by dormant provider-API branches/tests) but are NOT
+    // registered, so they are unreachable from every UI/resolver path that derives from this list.
+    private val registered = listOf(Torbox)
 
     fun all(): List<DebridProvider> = registered
 

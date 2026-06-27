@@ -1,6 +1,7 @@
 package com.nuvio.app.features.trakt
 
 import co.touchlab.kermit.Logger
+import com.nuvio.app.core.build.AppFeaturePolicy
 import com.nuvio.app.features.addons.httpGetTextWithHeaders
 import com.nuvio.app.features.addons.httpPostJsonWithHeaders
 import io.ktor.http.Url
@@ -124,6 +125,8 @@ object TraktAuthRepository {
     }
 
     suspend fun authorizedHeaders(): Map<String, String>? {
+        // TorBox-only product model: Trakt is disabled — never hand out credentials.
+        if (!AppFeaturePolicy.traktEnabled) return null
         ensureLoaded()
         if (!authState.isAuthenticated) return null
 
@@ -405,7 +408,10 @@ object TraktAuthRepository {
             else -> TraktConnectionMode.DISCONNECTED
         }
 
-        _isAuthenticated.value = authState.isAuthenticated
+        // TorBox-only product model: Trakt is disabled — force every consumer that keys off
+        // isAuthenticated (scrobble, library source, watch progress, list picker) to see "off",
+        // even if a token was stored/cloud-synced on a prior install.
+        _isAuthenticated.value = AppFeaturePolicy.traktEnabled && authState.isAuthenticated
         _uiState.value = TraktAuthUiState(
             mode = mode,
             credentialsConfigured = hasRequiredCredentials(),

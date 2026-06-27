@@ -54,10 +54,13 @@ import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.getString
 import org.jetbrains.compose.resources.stringResource
 
-private const val gitHubOwner = "NuvioMedia"
+// CineX private-fork update source. The fork is PUBLIC, so the GitHub Releases API is
+// reachable unauthenticated (no embedded token). Releases are published by
+// .github/workflows/release-mobile.yml with target_commitish == releaseChannelBranch.
+private const val gitHubOwner = "amrit-regmi"
 private const val gitHubRepo = "NuvioMobile"
 private const val gitHubApiBase = "https://api.github.com"
-private const val releaseChannelBranch = "cmp-rewrite"
+private const val releaseChannelBranch = "feat/private-backend"
 
 data class AppUpdate(
     val tag: String,
