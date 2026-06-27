@@ -1,0 +1,130 @@
+name: Release (CineX Mobile)
+
+# CineX private-fork release pipeline.
+# Builds a signed Full-flavour release APK and publishes it to GitHub Releases on THIS
+# (public) fork, where the in-app updater (AppUpdater.kt) discovers it via the GitHub
+# Releases API. Version is single-sourced from iosApp/Configuration/Version.xcconfig.
+#
+# REQUIRED repository secrets (Settings → Secrets and variables → Actions):
+#   KEYSTORE_BASE64              base64 of the release keystore  ( base64 -w0 release.jks )
+#   NUVIO_RELEASE_STORE_PASSWORD keystore store password
+#   NUVIO_RELEASE_KEY_ALIAS      signing key alias
+#   NUVIO_RELEASE_KEY_PASSWORD   signing key password
+# The release itself is published with the auto-provided GITHUB_TOKEN (no PAT needed).
+
+on:
+  workflow_dispatch:
+    inputs:
+      prerelease:
+        description: "Mark the GitHub release as a pre-release"
+        type: boolean
+        default: false
+  push:
+    # Auto-release when the version file is bumped on the release branch.
+    branches: [main]
+    paths: ["iosApp/Configuration/Version.xcconfig"]
+
+# The branch the in-app updater filters on (AppUpdater.releaseChannelBranch).
+# The release is created with this as target_commitish so updates are channel-matched.
+env:
+  RELEASE_CHANNEL_BRANCH: main
+
+concurrency:
+  group: release-mobile-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write          # create releases + upload assets
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read version from Version.xcconfig
+        id: ver
+        run: |
+          MARKETING_VERSION=$(grep -E '^MARKETING_VERSION=' iosApp/Configuration/Version.xcconfig | cut -d= -f2 | tr -d '[:space:]')
+          PROJECT_VERSION=$(grep -E '^CURRENT_PROJECT_VERSION=' iosApp/Configuration/Version.xcconfig | cut -d= -f2 | tr -d '[:space:]')
+          echo "version=${MARKETING_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "code=${PROJECT_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${MARKETING_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Releasing v${MARKETING_VERSION} (versionCode ${PROJECT_VERSION})"
+
+      - name: Abort if release tag already exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "${{ steps.ver.outputs.tag }}" >/dev/null 2>&1; then
+            echo "::error::Release ${{ steps.ver.outputs.tag }} already exists. Bump MARKETING_VERSION in Version.xcconfig."
+            exit 1
+          fi
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Use the runner's x86_64 AAPT2 (drop the ARM64 build-box override)
+        run: |
+          # gradle.properties pins an aarch64 AAPT2 that only exists on the build box.
+          # GitHub runners are x86_64, so remove the override and let AGP use the Maven AAPT2.
+          sed -i '/android.aapt2FromMavenOverride/d' gradle.properties
+          # enableResourceOptimizations stays as-is (false): harmless on x86_64, slightly larger APK.
+
+      - name: Provision signing material
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          NUVIO_RELEASE_STORE_PASSWORD: ${{ secrets.NUVIO_RELEASE_STORE_PASSWORD }}
+          NUVIO_RELEASE_KEY_ALIAS: ${{ secrets.NUVIO_RELEASE_KEY_ALIAS }}
+          NUVIO_RELEASE_KEY_PASSWORD: ${{ secrets.NUVIO_RELEASE_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::KEYSTORE_BASE64 secret is not set."; exit 1
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          {
+            echo "NUVIO_RELEASE_STORE_FILE=$RUNNER_TEMP/release.jks"
+            echo "NUVIO_RELEASE_STORE_PASSWORD=$NUVIO_RELEASE_STORE_PASSWORD"
+            echo "NUVIO_RELEASE_KEY_ALIAS=$NUVIO_RELEASE_KEY_ALIAS"
+            echo "NUVIO_RELEASE_KEY_PASSWORD=$NUVIO_RELEASE_KEY_PASSWORD"
+          } >> local.properties
+
+      - name: Build signed Full release APK
+        run: ./gradlew :androidApp:assembleFullRelease --no-daemon --stacktrace
+
+      - name: Verify APK is installable (manifest + resources present)
+        id: apk
+        run: |
+          APK=androidApp/build/outputs/apk/full/release/androidApp-full-release.apk
+          python3 - "$APK" <<'PY'
+          import sys, zipfile, os
+          apk = sys.argv[1]
+          n = zipfile.ZipFile(apk).namelist()
+          ok = 'AndroidManifest.xml' in n and 'resources.arsc' in n and any(x.startswith('res/') for x in n)
+          print(f"entries={len(n)} manifest={'AndroidManifest.xml' in n} arsc={'resources.arsc' in n} size={os.path.getsize(apk)}")
+          if not ok:
+              print("::error::APK is missing manifest/resources — not installable."); sys.exit(1)
+          PY
+          OUT="CineX-mobile-${{ steps.ver.outputs.tag }}.apk"
+          cp "$APK" "$OUT"
+          echo "path=$OUT" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: CineX Mobile ${{ steps.ver.outputs.tag }}
+          # target_commitish must equal AppUpdater.releaseChannelBranch so the in-app
+          # updater channel-matches this release.
+          target_commitish: ${{ env.RELEASE_CHANNEL_BRANCH }}
+          prerelease: ${{ inputs.prerelease == true }}
+          generate_release_notes: true
+          files: ${{ steps.apk.outputs.path }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

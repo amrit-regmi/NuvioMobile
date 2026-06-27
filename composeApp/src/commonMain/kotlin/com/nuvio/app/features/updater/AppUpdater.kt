@@ -60,7 +60,7 @@ import org.jetbrains.compose.resources.stringResource
 private const val gitHubOwner = "amrit-regmi"
 private const val gitHubRepo = "NuvioMobile"
 private const val gitHubApiBase = "https://api.github.com"
-private const val releaseChannelBranch = "feat/private-backend"
+private const val releaseChannelBranch = "main"
 
 data class AppUpdate(
     val tag: String,
