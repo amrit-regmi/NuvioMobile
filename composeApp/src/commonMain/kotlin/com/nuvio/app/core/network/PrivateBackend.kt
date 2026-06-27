@@ -31,6 +31,30 @@ object PrivateBackend {
     var host: String = hostOf(baseUrl)
         private set
 
+    /**
+     * Stable per-device id (same value the [com.nuvio.app.DeviceCapabilityRegistrar] PUTs to
+     * `/catalog-addon/device-profile`). Set synchronously at startup. When present it is appended
+     * as `?profile=<id>` to built-in catalog-addon **stream** requests via [withDeviceProfile] so
+     * the backend can right-size the returned stream list to THIS device's capability profile
+     * (resolution / HDR / size cap). Without it the backend sees no device and returns the
+     * unfiltered list — i.e. a 4K HDR REMUX a tablet can't decode lands at the top.
+     */
+    @Volatile
+    var deviceProfileId: String? = null
+
+    /**
+     * Appends `profile=<deviceProfileId>` to [url] when it targets our built-in catalog-addon and
+     * an id is known. No-op for third-party addons, when no id is set, or when already present.
+     */
+    fun withDeviceProfile(url: String): String {
+        val id = deviceProfileId?.trim().orEmpty()
+        if (id.isEmpty()) return url
+        if (!isBackendCatalogAddonUrl(url)) return url
+        if (url.contains("profile=")) return url
+        val sep = if (url.contains("?")) "&" else "?"
+        return "$url${sep}profile=$id"
+    }
+
     /** The built-in (baked) default base URL, ignoring any user override. */
     val defaultBaseUrl: String
         get() = normalize(PrivateBackendConfig.FASTAPI_BASE_URL)

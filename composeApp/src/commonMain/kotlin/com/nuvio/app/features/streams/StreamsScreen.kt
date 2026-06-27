@@ -72,6 +72,7 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import com.nuvio.app.core.build.AppFeaturePolicy
+import com.nuvio.app.core.ui.CineXLoader
 import com.nuvio.app.core.ui.NuvioBackButton
 import com.nuvio.app.core.ui.NuvioBottomSheetActionRow
 import com.nuvio.app.core.ui.NuvioBottomSheetDivider
@@ -84,9 +85,11 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.rememberModalBottomSheetState
 import coil3.compose.AsyncImage
 import com.nuvio.app.core.ui.nuvioSafeBottomPadding
+import com.nuvio.app.core.network.BackendAuth
 import com.nuvio.app.features.debrid.DebridSettingsRepository
 import com.nuvio.app.features.debrid.DirectDebridPlayableResult
 import com.nuvio.app.features.debrid.DirectDebridPlaybackResolver
+import com.nuvio.app.features.debrid.SharedTorboxKeyService
 import com.nuvio.app.features.debrid.toastMessage
 import com.nuvio.app.features.player.PlayerSettingsRepository
 import com.nuvio.app.features.watchprogress.WatchProgressRepository
@@ -336,11 +339,7 @@ fun StreamsScreen(
                             modifier = Modifier.padding(horizontal = 24.dp),
                         )
                     }
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(32.dp),
-                        color = Color.White,
-                        strokeWidth = 2.5.dp,
-                    )
+                    CineXLoader(size = 56.dp)
                     Text(
                         text = uiState.overlayMessage
                             ?: stringResource(Res.string.streams_finding_source),
@@ -970,17 +969,19 @@ private fun LazyListScope.streamSection(
                 )
             },
         ) { _, stream ->
-            val isSelectable = stream.isSelectableForPlayback(debridEnabled)
+            val sharedTorboxAvailable = SharedTorboxKeyService.isConfigured() &&
+                BackendAuth.currentAccessToken() != null
+            val isSelectable = stream.isSelectableForPlayback(debridEnabled, sharedTorboxAvailable)
             val isUnsupportedTorrentStream =
                 stream.needsLocalDebridResolve &&
                     !AppFeaturePolicy.p2pEnabled &&
                     !(debridEnabled && stream.isAddonDebridCandidate)
-            // This stream could be played via debrid but the user hasn't connected a debrid
-            // provider (or hasn't enabled it). Show a helpful prompt instead of a silent no-op.
             val isDebridRequired = isUnsupportedTorrentStream && stream.isAddonDebridCandidate
+            // Backend debrid stream (Tier 3: not yet cached on TorBox). Tap to explain.
+            val isDownloadRequired = stream.isBackendDebridStream && !stream.isDirectDebridStream && !isSelectable
             StreamCard(
                 stream = stream,
-                enabled = isSelectable || isUnsupportedTorrentStream,
+                enabled = isSelectable || isUnsupportedTorrentStream || isDownloadRequired,
                 appendInstantServiceToDefaultName = appendInstantServiceToDefaultName,
                 showFileSizeBadges = showFileSizeBadges,
                 showAddonLogo = showAddonLogo,
@@ -992,6 +993,8 @@ private fun LazyListScope.streamSection(
                         NuvioToastController.show(debridRequiredText)
                     } else if (isUnsupportedTorrentStream) {
                         NuvioToastController.show(torrentNotSupportedText)
+                    } else if (isDownloadRequired) {
+                        NuvioToastController.show("Stream not yet cached on TorBox. Select a ⚡ stream instead.")
                     }
                 },
                 onLongClick = {

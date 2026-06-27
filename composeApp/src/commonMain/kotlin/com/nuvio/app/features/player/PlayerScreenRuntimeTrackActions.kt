@@ -127,7 +127,13 @@ internal fun PlayerScreenRuntime.restorePersistedTrackPreferenceIfNeeded() {
                 selectedAddonSubtitleId = preference.addonSubtitleId ?: url
                 selectedSubtitleIndex = -1
                 useCustomSubtitles = true
-                playerController?.setSubtitleUri(url)
+                // Pass the persisted clean language/label so the restored track shows a real language
+                // (for preferred-language matching) and a human label — never the raw URL / ".zip".
+                playerController?.setSubtitleUri(
+                    url,
+                    language = preference.subtitleLanguage.orEmpty(),
+                    label = preference.subtitleName.orEmpty(),
+                )
                 preferredSubtitleSelectionApplied = true
             }
         }

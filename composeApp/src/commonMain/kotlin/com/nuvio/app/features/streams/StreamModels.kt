@@ -102,6 +102,11 @@ data class StreamItem(
     val isAddonDebridCandidate: Boolean
         get() = isInstalledAddonStream && (needsLocalDebridResolve || isDirectDebridStream)
 
+    val isBackendDebridStream: Boolean
+        get() = isInstalledAddonStream &&
+            clientResolve?.type.equals("debrid", ignoreCase = true) == true &&
+            !clientResolve?.service.isNullOrBlank()
+
     val hasPlayableSource: Boolean
         get() = url != null || infoHash != null || externalUrl != null || clientResolve != null
 }
@@ -164,10 +169,11 @@ private fun String?.extractBtihInfoHash(): String? {
         .takeIf { it.isNotEmpty() }
 }
 
-fun StreamItem.isSelectableForPlayback(debridEnabled: Boolean): Boolean =
+fun StreamItem.isSelectableForPlayback(debridEnabled: Boolean, sharedTorboxAvailable: Boolean = false): Boolean =
     playableDirectUrl != null ||
         (AppFeaturePolicy.p2pEnabled && needsLocalDebridResolve && p2pInfoHash != null) ||
-        (debridEnabled && isAddonDebridCandidate)
+        (debridEnabled && isAddonDebridCandidate) ||
+        (sharedTorboxAvailable && isDirectDebridStream && isInstalledAddonStream)
 
 data class StreamBehaviorHints(
     val bingeGroup: String? = null,

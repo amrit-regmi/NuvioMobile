@@ -59,6 +59,7 @@ import com.nuvio.app.features.player.AndroidLibmpvVideoOutput
 import com.nuvio.app.features.player.AndroidPlaybackEngine
 import com.nuvio.app.features.player.AudioLanguageOption
 import com.nuvio.app.features.player.AvailableLanguageOptions
+import com.nuvio.app.features.player.SupportedSubtitleLanguageOptions
 import com.nuvio.app.features.player.ExternalPlayerApp
 import com.nuvio.app.features.player.ExternalPlayerPlatform
 import com.nuvio.app.features.player.IosAudioOutputMode
@@ -1192,7 +1193,7 @@ private fun PlaybackSettingsSection(
                 LanguageSelectionOption(SubtitleLanguageOption.NONE, stringResource(Res.string.settings_playback_option_none)),
                 LanguageSelectionOption(SubtitleLanguageOption.DEVICE, stringResource(Res.string.settings_playback_option_device_language)),
                 LanguageSelectionOption(SubtitleLanguageOption.FORCED, stringResource(Res.string.settings_playback_option_forced)),
-            ) + AvailableLanguageOptions.map { option ->
+            ) + SupportedSubtitleLanguageOptions.map { option ->
                 LanguageSelectionOption(option.code, stringResource(option.labelRes))
             },
             selectedValue = preferredSubtitleLanguage,
@@ -1210,7 +1211,7 @@ private fun PlaybackSettingsSection(
             options = listOf(
                 LanguageSelectionOption(null, stringResource(Res.string.settings_playback_option_none)),
                 LanguageSelectionOption(SubtitleLanguageOption.FORCED, stringResource(Res.string.settings_playback_option_forced)),
-            ) + AvailableLanguageOptions.map { option ->
+            ) + SupportedSubtitleLanguageOptions.map { option ->
                 LanguageSelectionOption(option.code, stringResource(option.labelRes))
             },
             selectedValue = secondaryPreferredSubtitleLanguage,

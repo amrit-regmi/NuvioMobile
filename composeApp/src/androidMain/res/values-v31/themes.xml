@@ -6,7 +6,9 @@
 
     <style name="Theme.Nuvio.Splash" parent="Theme.SplashScreen">
         <item name="windowSplashScreenBackground">@color/nuvio_background</item>
-        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash_logo</item>
+        <!-- Transparent icon: the OS splash shows only the dark background, then the Compose
+             CineXSplash intro animates in immediately (no static logo flash first). -->
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_none</item>
         <item name="postSplashScreenTheme">@style/Theme.Nuvio</item>
     </style>
 </resources>

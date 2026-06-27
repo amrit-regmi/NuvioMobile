@@ -19,6 +19,7 @@ import com.nuvio.app.features.player.SubtitleRepository
 import com.nuvio.app.features.profiles.ProfileRepository
 import com.nuvio.app.features.search.SearchRepository
 import com.nuvio.app.features.settings.ThemeSettingsRepository
+import com.nuvio.app.features.streams.ResolvedStreamCache
 import com.nuvio.app.features.streams.StreamContextStore
 import com.nuvio.app.features.streams.StreamBadgeSettingsRepository
 import com.nuvio.app.features.streams.StreamLaunchStore
@@ -58,9 +59,10 @@ internal object LocalAccountDataCleaner {
         P2pSettingsRepository.clearLocalState()
         CatalogRepository.clear()
         StreamsRepository.clear()
+        ResolvedStreamCache.clear()
         MetaDetailsRepository.clear()
         SearchRepository.reset()
-        SubtitleRepository.clear()
+        SubtitleRepository.clearAll()
         PlayerLaunchStore.clear()
         StreamLaunchStore.clear()
         StreamContextStore.clear()

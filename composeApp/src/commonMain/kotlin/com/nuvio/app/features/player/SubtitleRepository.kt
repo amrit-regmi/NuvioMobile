@@ -5,6 +5,9 @@ import com.nuvio.app.features.addons.AddonResource
 import com.nuvio.app.features.addons.buildAddonResourceUrl
 import com.nuvio.app.features.addons.enabledAddons
 import com.nuvio.app.features.addons.httpGetText
+import co.touchlab.kermit.Logger
+import kotlinx.atomicfu.locks.SynchronizedObject
+import kotlinx.atomicfu.locks.synchronized
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -43,10 +46,88 @@ object SubtitleRepository {
 
     private var activeFetchJob: Job? = null
 
+    // r15: identity of the last successfully-fetched (or in-flight) request, so a repeated fetch for
+    // the SAME content (e.g. the details-open subtitle prewarm followed by the player's lazy
+    // auto-fetch) is a no-op instead of clearing + re-fetching. This keeps addonSubtitles populated
+    // continuously from details-open through player-open, so the player can bundle the candidates
+    // into the INITIAL MediaItem (first subtitle switch = pure track selection, no re-prepare).
+    private var lastFetchKey: String? = null
+
+    // r16: persistent, content-keyed cache of resolved subtitle lists. The player clears the visible
+    // list ([clear]) on every source open to avoid showing a previous title's subs, which used to
+    // force a full (~tens-of-seconds SubDL) re-fetch even when REPLAYING the same title. This map
+    // survives player open/close (only wiped on sign-out via [clearAll]) so a replay — or a quick
+    // re-open after browsing back — restores the candidate list INSTANTLY, with no network round-trip
+    // and therefore bundled into the initial prepare (no late fold / stream restart). Mirrors how
+    // ResolvedStreamCache makes the stream url instant on replay.
+    private val cacheLock = SynchronizedObject()
+    private val contentCache = LinkedHashMap<String, List<AddonSubtitle>>()
+    private const val MAX_CONTENT_CACHE_ENTRIES = 50
+
+    /**
+     * r15: prefetch addon subtitles at details-open so the candidate list is ready BEFORE the player
+     * composes. Best-effort, deduped by content key — never clears an existing successful result.
+     */
+    fun prewarmAddonSubtitles(type: String, videoId: String) {
+        val key = "${canonicalSubtitleType(type)}|$videoId"
+        val alreadyCached = synchronized(cacheLock) { contentCache.containsKey(key) }
+        Logger.i("SubtitleRepo: prewarm key=$key alreadyCached=$alreadyCached lastFetchKey=$lastFetchKey")
+        if (key == lastFetchKey) return
+        fetchAddonSubtitles(type, videoId)
+    }
+
+    /**
+     * Pulsating-phase fast path: synchronously restore the resolved candidate list from the
+     * persistent cache WITHOUT any network or addon dependency. Returns true if the content was
+     * cached (typically from the details-open prewarm) and the visible list is now populated.
+     *
+     * This is the deterministic fix for "subs bundle at initial prepare". The player's source-open
+     * [clear] wipes the visible list the moment the stream resolves; the previous re-populate was
+     * gated on installed addons being loaded ([addonSubtitleFetchKey]), which frequently misses the
+     * ~3s initial-prepare window — so the player prepared with 0 candidates and folded later (= the
+     * stream-restart / second-spinner bug). A cache hit here needs neither addons nor the network,
+     * so it lands instantly inside the bundle window. A miss leaves all state untouched so the
+     * addon-gated [fetchAddonSubtitles] network path still runs (and we accept the rare on-demand fold).
+     */
+    fun restoreFromCache(type: String, videoId: String): Boolean {
+        val key = "${canonicalSubtitleType(type)}|$videoId"
+        val cached = synchronized(cacheLock) { contentCache[key] } ?: run {
+            Logger.i("SubtitleRepo: restoreFromCache MISS key=$key (will network-fetch when addons load)")
+            return false
+        }
+        Logger.i("SubtitleRepo: restoreFromCache HIT key=$key ${cached.size} langs=${cached.map { it.language }}")
+        lastFetchKey = key
+        activeFetchJob?.cancel()
+        _error.value = null
+        _isLoading.value = false
+        _addonSubtitles.value = cached
+        return true
+    }
+
     fun fetchAddonSubtitles(type: String, videoId: String) {
+        val requestType = canonicalSubtitleType(type)
+        val key = "$requestType|$videoId"
+        // r15: dedup — if we've already loaded (or are loading) this exact content, don't clear and
+        // re-fetch. Prevents the player's lazy auto-fetch from wiping the details-open prewarm result.
+        if (key == lastFetchKey && (_isLoading.value || _addonSubtitles.value.isNotEmpty())) {
+            return
+        }
+        // r16: persistent cache hit — restore the resolved list INSTANTLY (no network). This is the
+        // replay / quick re-open path: the player cleared the visible list on source-open, but the
+        // content's subtitles were already resolved earlier this session, so there's nothing to fetch.
+        val cached = synchronized(cacheLock) { contentCache[key] }
+        Logger.i("SubtitleRepo: fetch key=$key cacheHit=${cached != null} (size=${cached?.size ?: -1})")
+        if (cached != null) {
+            lastFetchKey = key
+            activeFetchJob?.cancel()
+            _error.value = null
+            _isLoading.value = false
+            _addonSubtitles.value = cached
+            return
+        }
+        lastFetchKey = key
         activeFetchJob?.cancel()
         activeFetchJob = scope.launch {
-            val requestType = canonicalSubtitleType(type)
             _isLoading.value = true
             _error.value = null
             _addonSubtitles.value = emptyList()
@@ -65,6 +146,81 @@ object SubtitleRepository {
                 if (subtitleProviderEnabled) addAll(contentAddons)
                 addAll(installedAddons)
             }.distinctBy { it.manifest?.transportUrl ?: it.manifestUrl }
+
+            // #87 / api_bridge "best-subtitle-per-language": when the built-in subtitle provider is
+            // ON, ask OUR backend for the prewarmed BEST subtitle per language (≤3, already
+            // moviehash/release-matched and ordered primary→secondary→en) via `/subtitles/best`.
+            // Per the frozen contract, when ON the player exposes ONLY these ≤3 entries — NOT the
+            // full variant/language list — so they bundle at the initial prepare and every switch is
+            // pure track-selection. A true miss (endpoint absent / empty) falls through to the full
+            // `/subtitles` list below so the user is never left with nothing.
+            if (subtitleProviderEnabled) {
+                val best = mutableListOf<AddonSubtitle>()
+                for (addon in contentAddons) {
+                    val manifest = addon.manifest ?: continue
+                    val subtitleResource =
+                        manifest.resources.find { it.name.isSubtitleResourceName() } ?: continue
+                    if (!subtitleResource.supportsSubtitleType(requestType, videoId)) continue
+                    val bestUrl = buildAddonResourceUrl(
+                        manifestUrl = manifest.transportUrl,
+                        resource = "subtitles/best",
+                        type = requestType,
+                        id = videoId,
+                    )
+                    try {
+                        val response = withContext(Dispatchers.Default) { httpGetText(bestUrl) }
+                        val bestArray = json.parseToJsonElement(response)
+                            .jsonObject["best"]?.jsonArray ?: continue
+                        for (element in bestArray) {
+                            val obj = element.jsonObject
+                            val url = obj.stringValue("url") ?: continue
+                            // Contract `lang` is 3-letter ISO-639-2 (eng/swe/fin); map to our codes.
+                            val rawLang = obj.stringValue("lang") ?: "unknown"
+                            val normalizedLang = when (rawLang.lowercase()) {
+                                "eng" -> "en"
+                                "swe" -> "sv"
+                                "fin" -> "fi"
+                                else -> normalizeLanguageCode(rawLang) ?: rawLang
+                            }
+                            val languageLabel = getLanguageLabelForCode(normalizedLang)
+                            best.add(
+                                AddonSubtitle(
+                                    id = "${manifest.id}_best_${normalizedLang}_${best.size}",
+                                    url = url,
+                                    language = normalizedLang,
+                                    display = getString(
+                                        Res.string.player_addon_subtitle_display_format,
+                                        languageLabel,
+                                        addon.displayTitle,
+                                    ),
+                                    addonName = addon.displayTitle,
+                                )
+                            )
+                        }
+                        // First backend addon that returns a best set wins — keep its server-side
+                        // primary→secondary→en order (= auto-apply priority); do NOT re-sort.
+                        if (best.isNotEmpty()) break
+                    } catch (error: Throwable) {
+                        if (error is CancellationException) throw error
+                    }
+                }
+                if (best.isNotEmpty()) {
+                    _addonSubtitles.value = best
+                    synchronized(cacheLock) {
+                        contentCache[key] = best
+                        while (contentCache.size > MAX_CONTENT_CACHE_ENTRIES) {
+                            val eldest = contentCache.keys.firstOrNull() ?: break
+                            contentCache.remove(eldest)
+                        }
+                    }
+                    _isLoading.value = false
+                    Logger.i("SubtitleRepo: best HIT key=$key cached ${best.size} langs=${best.map { it.language }}")
+                    return@launch
+                }
+                Logger.i("SubtitleRepo: best MISS key=$key → falling through to full /subtitles list")
+                // best miss → fall through to the full-list path below.
+            }
+
             val allSubs = mutableListOf<AddonSubtitle>()
 
             for (addon in addons) {
@@ -91,8 +247,14 @@ object SubtitleRepository {
                         val id = obj.stringValue("id")
                             ?: "${manifest.id}_${allSubs.size}"
                         val url = obj.stringValue("url") ?: continue
-                        val rawLang = obj.subtitleLanguage() ?: "unknown"
+                        // Fix 3: never let a raw filename/URL (e.g. SubDL's ".../subtitle/NNN.zip")
+                        // leak into the label. Sanitize the candidate language string first, then
+                        // resolve to a clean human language name.
+                        val rawLang = obj.subtitleLanguage().cleanLanguageCandidate() ?: "unknown"
                         val normalizedLang = normalizeLanguageCode(rawLang) ?: rawLang
+                        // Prefer the normalized code for the visible name so we always show a real
+                        // language (English / Suomi-Finnish / Svenska-Swedish), never ".zip".
+                        val languageLabel = getLanguageLabelForCode(normalizedLang)
 
                         allSubs.add(
                             AddonSubtitle(
@@ -101,7 +263,7 @@ object SubtitleRepository {
                                 language = normalizedLang,
                                 display = getString(
                                     Res.string.player_addon_subtitle_display_format,
-                                    getLanguageLabelForCode(rawLang),
+                                    languageLabel,
                                     addon.displayTitle,
                                 ),
                                 addonName = addon.displayTitle,
@@ -136,6 +298,17 @@ object SubtitleRepository {
             }
 
             _addonSubtitles.value = orderedSubs
+            // r16: cache a non-empty result so a later replay/re-open of this content is instant.
+            // Empty/error results are NOT cached, so we retry the fetch next time.
+            if (orderedSubs.isNotEmpty()) {
+                synchronized(cacheLock) {
+                    contentCache[key] = orderedSubs
+                    while (contentCache.size > MAX_CONTENT_CACHE_ENTRIES) {
+                        val eldest = contentCache.keys.firstOrNull() ?: break
+                        contentCache.remove(eldest)
+                    }
+                }
+            }
             if (orderedSubs.isEmpty() && addons.any { it.manifest?.resources?.any { r -> r.name.isSubtitleResourceName() } == true }) {
                 _error.value = getString(Res.string.compose_player_no_subtitles_found)
             }
@@ -143,11 +316,24 @@ object SubtitleRepository {
         }
     }
 
+    /**
+     * Clears the VISIBLE subtitle list (called by the player on every source-open so a previous
+     * title's subs never leak into a new one). r16: this deliberately KEEPS [contentCache] so that
+     * replaying / re-opening the same content restores its list instantly from cache instead of
+     * re-fetching. Use [clearAll] for sign-out, where cached results must not survive.
+     */
     fun clear() {
         activeFetchJob?.cancel()
+        lastFetchKey = null
         _addonSubtitles.value = emptyList()
         _isLoading.value = false
         _error.value = null
+    }
+
+    /** Full reset incl. the persistent cache — sign-out only (never replay another account's subs). */
+    fun clearAll() {
+        clear()
+        synchronized(cacheLock) { contentCache.clear() }
     }
 }
 
@@ -162,6 +348,24 @@ private fun AddonResource.supportsSubtitleType(type: String, videoId: String): B
     val typeMatches = types.isEmpty() || types.any { canonicalSubtitleType(it).equals(canonical, ignoreCase = true) }
     if (!typeMatches) return false
     return idPrefixes.isEmpty() || idPrefixes.any { prefix -> videoId.startsWith(prefix) }
+}
+
+/**
+ * Fix 3: strip URL/filename noise out of a candidate language string. Backends sometimes put a
+ * raw subtitle path (e.g. "https://dl.subdl.com/subtitle/3098041.zip") in the label/lang field;
+ * such a value must never be shown to the user as a "language". Returns null when the candidate is
+ * clearly a URL/path/archive name so the caller falls back to "unknown".
+ */
+private fun String?.cleanLanguageCandidate(): String? {
+    val value = this?.trim()?.takeIf { it.isNotBlank() } ?: return null
+    val looksLikeUrlOrFile = value.contains("://") ||
+        value.contains('/') ||
+        value.endsWith(".zip", ignoreCase = true) ||
+        value.endsWith(".srt", ignoreCase = true) ||
+        value.endsWith(".vtt", ignoreCase = true) ||
+        value.endsWith(".ass", ignoreCase = true) ||
+        value.endsWith(".ssa", ignoreCase = true)
+    return if (looksLikeUrlOrFile) null else value
 }
 
 private fun JsonObject.subtitleLanguage(): String? =

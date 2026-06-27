@@ -10,11 +10,26 @@ import com.nuvio.app.features.downloads.DownloadItem
 import com.nuvio.app.features.downloads.DownloadsRepository
 import com.nuvio.app.features.p2p.P2pSettingsRepository
 import com.nuvio.app.features.p2p.P2pStreamingEngine
+import com.nuvio.app.features.streams.ResolvedStreamCache
 import com.nuvio.app.features.streams.StreamItem
 import com.nuvio.app.features.streams.StreamLinkCacheRepository
+import com.nuvio.app.features.streams.resolvedStreamCacheKey
 import com.nuvio.app.features.watchprogress.WatchProgressRepository
 import com.nuvio.app.features.watchprogress.buildPlaybackVideoId
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+import nuvio.composeapp.generated.resources.Res
+import nuvio.composeapp.generated.resources.debrid_resolve_failed
+import org.jetbrains.compose.resources.getString
+
+/** Fix 1: upper bound for resolving a cached debrid stream during an in-player source switch. */
+private const val PLAYER_DEBRID_RESOLVE_TIMEOUT_MS = 45_000L
+
+/**
+ * Generous-but-finite ceiling when ATTACHING to an in-flight StreamWarmer warm. A live warm can
+ * exceed the 45s fresh cap, but must never wait forever (the r8 no-cap path caused a silent hang).
+ */
+private const val PLAYER_DEBRID_RESOLVE_WARM_CEILING_MS = 90_000L
 
 internal fun PlayerScreenRuntime.resolveDebridForPlayer(
     stream: StreamItem,
@@ -24,20 +39,49 @@ internal fun PlayerScreenRuntime.resolveDebridForPlayer(
     onStale: () -> Unit,
 ): Boolean {
     if (!DirectDebridPlaybackResolver.shouldResolveToPlayableStream(stream)) return false
+    val cacheKey = stream.resolvedStreamCacheKey(season, episode)
+    // Fast path: StreamWarmer may have already pre-resolved this stream during details-open.
+    // Serve the cached CDN url instantly and skip the TorBox round-trip.
+    val cachedUrl = ResolvedStreamCache.get(cacheKey)
+    if (cachedUrl != null) {
+        onResolved(stream.copy(url = cachedUrl, externalUrl = null))
+        return true
+    }
+    // If a StreamWarmer resolve for this exact stream is already in flight (cold TorBox), attach
+    // to it rather than launching a duplicate. A live warm can exceed the play timeout, so only
+    // cap a FRESH resolve.
+    val awaitingWarm = ResolvedStreamCache.isResolving(cacheKey)
     scope.launch {
-        val resolved = DirectDebridPlaybackResolver.resolveToPlayableStream(
-            stream = stream,
-            season = season,
-            episode = episode,
-        )
-        when (resolved) {
-            is DirectDebridPlayableResult.Success -> onResolved(resolved.stream)
-            else -> {
-                resolved.toastMessage()?.let { NuvioToastController.show(it) }
-                if (resolved == DirectDebridPlayableResult.Stale) {
+        // Fix 1: bound the resolve with a timeout and surface an error on timeout/failure instead
+        // of silently hanging (same hardening as openSelectedStream in App.kt). A FRESH resolve
+        // uses the 45s cap; attaching to an in-flight warm uses the more generous 90s ceiling —
+        // but NEVER an unbounded wait.
+        val resolveCeilingMs = if (awaitingWarm) {
+            PLAYER_DEBRID_RESOLVE_WARM_CEILING_MS
+        } else {
+            PLAYER_DEBRID_RESOLVE_TIMEOUT_MS
+        }
+        val resolvedUrl = ResolvedStreamCache.resolveSingleFlight(cacheKey) {
+            val r = withTimeoutOrNull(resolveCeilingMs) {
+                DirectDebridPlaybackResolver.resolveToPlayableStream(stream, season, episode)
+            }
+            when (r) {
+                is DirectDebridPlayableResult.Success -> r.stream.playableDirectUrl
+                DirectDebridPlayableResult.Stale -> {
                     onStale()
+                    null
+                }
+                null -> null
+                else -> {
+                    r.toastMessage()?.let { NuvioToastController.show(it) }
+                    null
                 }
             }
+        }
+        if (resolvedUrl != null) {
+            onResolved(stream.copy(url = resolvedUrl, externalUrl = null))
+        } else {
+            NuvioToastController.show(getString(Res.string.debrid_resolve_failed))
         }
     }
     return true

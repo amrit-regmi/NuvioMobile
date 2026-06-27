@@ -11,6 +11,62 @@ internal fun PlayerScreenRuntime.fetchAddonSubtitlesForActiveItem() {
     SubtitleRepository.fetchAddonSubtitles(type, videoId)
 }
 
+/**
+ * Auto-applies the highest-preference addon (our-backend) subtitle on playback start,
+ * with NO manual user tap. Selection priority:
+ *   1. preferred subtitle language, 2. secondary subtitle language,
+ *   3. (then) any remaining language the backend returned (e.g. sv/fi),
+ * picking the first match in [addonSubtitles] (which the repository already orders by
+ * preference). If none of the configured targets match, fall back to the first available
+ * subtitle so the user still gets subtitles instead of silence. Embedded/internal tracks
+ * always win first (handled in refreshTracks); this only fires when no internal track was
+ * selected and the user hasn't already made a choice.
+ */
+internal fun PlayerScreenRuntime.autoApplyPreferredAddonSubtitleIfNeeded() {
+    // A choice was already made (restored, internal, or user) — never override it.
+    if (selectedAddonSubtitleId != null) return
+    if (useCustomSubtitles) return
+    if (selectedSubtitleIndex != -1) return
+
+    // Subtitles disabled by the user.
+    val normalizedPreferred = normalizeLanguageCode(playerSettingsUiState.preferredSubtitleLanguage)
+    if (!subtitleStyle.useForcedSubtitles &&
+        normalizedPreferred == SubtitleLanguageOption.NONE &&
+        playerSettingsUiState.secondaryPreferredSubtitleLanguage.isNullOrBlank()
+    ) {
+        return
+    }
+
+    val available = addonSubtitles
+    if (available.isEmpty()) return
+
+    val targets = preferredSubtitleTargetsForSettings(playerSettingsUiState)
+
+    // Walk targets in priority order; the first available language wins.
+    val chosen = targets.firstNotNullOfOrNull { target ->
+        available.firstOrNull { sub ->
+            languageMatchesPreference(trackLanguage = sub.language, targetLanguage = target)
+        }
+    } ?: run {
+        // No configured target matched. Only fall back to "any available" when the user
+        // hasn't restricted to preferred-only languages.
+        if (subtitleStyle.showOnlyPreferredLanguages ||
+            playerSettingsUiState.addonSubtitleStartupMode == AddonSubtitleStartupMode.PREFERRED_ONLY
+        ) {
+            null
+        } else {
+            available.firstOrNull()
+        }
+    } ?: return
+
+    selectedAddonSubtitleId = chosen.id
+    selectedSubtitleIndex = -1
+    useCustomSubtitles = true
+    persistAddonSubtitlePreference(chosen)
+    playerController?.setSubtitleUri(chosen.url, language = chosen.language, label = chosen.display)
+    preferredSubtitleSelectionApplied = true
+}
+
 internal fun PlayerScreenRuntime.setSubtitleDelay(delayMs: Int) {
     val clamped = delayMs.coerceIn(SUBTITLE_DELAY_MIN_MS, SUBTITLE_DELAY_MAX_MS)
     subtitleDelayMs = clamped

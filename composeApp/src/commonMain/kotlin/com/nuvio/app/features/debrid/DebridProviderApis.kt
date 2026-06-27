@@ -101,11 +101,37 @@ private class TorboxDebridProviderApi(
             ?: return DirectDebridResolveResult.Stale
 
         return try {
-            val create = TorboxApiClient.createTorrent(apiKey = apiKey, magnet = magnet)
+            val create = torboxCall { TorboxApiClient.createTorrent(apiKey = apiKey, magnet = magnet) }
+                ?: return DirectDebridResolveResult.Stale
             val torrentId = create.body?.takeIf { it.success != false }?.data?.resolvedTorrentId()
                 ?: return create.toFailureForCreate()
 
-            val torrent = TorboxApiClient.getTorrent(apiKey = apiKey, id = torrentId)
+            // Fast path: when the clientResolve already carries a fileIdx, request the download
+            // link directly and skip the getTorrent (mylist) round-trip. Falls through to the
+            // slow path if it fails (stale fileIdx / not yet indexed). Mirrors NuvioTV's
+            // TorboxDirectDebridResolver fast-path.
+            val knownFileIdx = resolve.fileIdx
+            if (knownFileIdx != null) {
+                val fastLink = torboxCall {
+                    TorboxApiClient.requestDownloadLink(
+                        apiKey = apiKey,
+                        torrentId = torrentId,
+                        fileId = knownFileIdx,
+                    )
+                }
+                val fastUrl = fastLink?.takeIf { it.isSuccessful }?.body?.data?.takeIf { it.isNotBlank() }
+                if (fastUrl != null) {
+                    return DirectDebridResolveResult.Success(
+                        url = fastUrl,
+                        filename = stream.behaviorHints.filename?.takeIf { it.isNotBlank() },
+                        videoSize = stream.behaviorHints.videoSize,
+                    )
+                }
+                // else: fall through to getTorrent → selectFile → requestdl
+            }
+
+            val torrent = torboxCall { TorboxApiClient.getTorrent(apiKey = apiKey, id = torrentId) }
+                ?: return DirectDebridResolveResult.Stale
             if (!torrent.isSuccessful) {
                 return DirectDebridResolveResult.Stale
             }
@@ -114,11 +140,13 @@ private class TorboxDebridProviderApi(
                 ?: return DirectDebridResolveResult.Stale
             val fileId = file.id ?: return DirectDebridResolveResult.Stale
 
-            val link = TorboxApiClient.requestDownloadLink(
-                apiKey = apiKey,
-                torrentId = torrentId,
-                fileId = fileId,
-            )
+            val link = torboxCall {
+                TorboxApiClient.requestDownloadLink(
+                    apiKey = apiKey,
+                    torrentId = torrentId,
+                    fileId = fileId,
+                )
+            } ?: return DirectDebridResolveResult.Stale
             if (!link.isSuccessful) {
                 return DirectDebridResolveResult.Stale
             }
@@ -136,6 +164,17 @@ private class TorboxDebridProviderApi(
         }
     }
 }
+
+/** Per-call TorBox timeout. Tighter than the shared 60s OkHttp client so a single stuck
+ *  call fails over to the next candidate instead of stalling the whole play path. */
+private const val TORBOX_CALL_TIMEOUT_MS = 28_000L
+
+/**
+ * Runs a single TorBox API call with a per-call timeout. Returns null on timeout (treated by
+ * callers as Stale/failover) so one slow call can't hang the resolve. Cancellation propagates.
+ */
+private suspend fun <T> torboxCall(block: suspend () -> T): T? =
+    kotlinx.coroutines.withTimeoutOrNull(TORBOX_CALL_TIMEOUT_MS) { block() }
 
 internal class PremiumizeDebridProviderApi(
     private val fileSelector: PremiumizeDirectDownloadFileSelector = PremiumizeDirectDownloadFileSelector(),

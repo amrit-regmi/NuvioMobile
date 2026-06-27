@@ -10,6 +10,7 @@ import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.network_empty_response_body
 import nuvio.composeapp.generated.resources.network_request_failed_http
 import org.jetbrains.compose.resources.getString
+import okhttp3.ConnectionPool
 import okhttp3.ResponseBody
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -79,9 +80,21 @@ private fun parseEnabledStateLine(line: String): Pair<String, Boolean>? {
 
 private val addonHttpClient = OkHttpClient.Builder()
     .dns(IPv4FirstDns())
-    .connectTimeout(60, TimeUnit.SECONDS)
+    // Connecting should never take 60s — a host that can't be reached in 12s is unreachable on
+    // this network; failing fast lets the call retry on a fresh route instead of stalling.
+    .connectTimeout(12, TimeUnit.SECONDS)
     .readTimeout(60, TimeUnit.SECONDS)
-    .writeTimeout(60, TimeUnit.SECONDS)
+    .writeTimeout(30, TimeUnit.SECONDS)
+    // HTTP/2 health pings: after a wifi blip a pooled keep-alive connection goes half-open. Without
+    // pings, the next request rides that dead socket and hangs until the read timeout (→ the 28s
+    // TorBox per-call ceiling, ×2 = the ~58s "stuck on preparing stream" stall). 10s pings detect
+    // the dead connection and fail fast so OkHttp re-dials a working one.
+    .pingInterval(10, TimeUnit.SECONDS)
+    // Retry on a fresh connection when a pooled one fails (stale socket after the network blipped).
+    .retryOnConnectionFailure(true)
+    // Evict idle pooled connections quickly (default keeps them 5 min) so they don't linger long
+    // enough to go stale across a wifi drop.
+    .connectionPool(ConnectionPool(maxIdleConnections = 5, keepAliveDuration = 30, TimeUnit.SECONDS))
     .followRedirects(true)
     .followSslRedirects(true)
     .proxy(Proxy.NO_PROXY)

@@ -65,6 +65,7 @@ import com.nuvio.app.core.build.AppFeaturePolicy
 import com.nuvio.app.core.build.TrailerPlaybackMode
 import com.nuvio.app.core.network.NetworkCondition
 import com.nuvio.app.core.network.NetworkStatusRepository
+import com.nuvio.app.core.ui.CineXLoader
 import com.nuvio.app.core.ui.NuvioBackButton
 import com.nuvio.app.core.ui.TraktListPickerDialog
 import com.nuvio.app.core.ui.nuvioSafeBottomPadding
@@ -89,6 +90,9 @@ import com.nuvio.app.features.home.MetaPreview
 import com.nuvio.app.features.library.LibraryRepository
 import com.nuvio.app.features.library.toLibraryItem
 import com.nuvio.app.features.player.PlayerSettingsRepository
+import com.nuvio.app.features.player.SubtitleRepository
+import com.nuvio.app.features.streams.CatalogPrewarmService
+import com.nuvio.app.features.streams.StreamWarmer
 import com.nuvio.app.features.streams.StreamAutoPlayPolicy
 import com.nuvio.app.features.tmdb.TmdbSettingsRepository
 import com.nuvio.app.features.tmdb.TmdbService
@@ -305,9 +309,8 @@ fun MetaDetailsScreen(
     ) {
         when {
             displayedMeta == null && uiState.isLoading -> {
-                CircularProgressIndicator(
+                CineXLoader(
                     modifier = Modifier.align(Alignment.Center),
-                    color = MaterialTheme.colorScheme.primary,
                 )
             }
 
@@ -460,6 +463,46 @@ fun MetaDetailsScreen(
                     seriesActionVideo?.id?.takeIf { it.isNotBlank() } ?: action.videoId
                 }
                 val hasEpisodes = meta.videos.any { it.season != null || it.episode != null }
+
+                // Fix 2 — details-open prewarm: pre-resolve top stream candidate(s) to a
+                // direct CDN url (Tier-1) and bootstrap en/sv/fi subtitles BEFORE the user
+                // hits play, so the subsequent /stream returns instantly-playable streams.
+                // Best-effort + deduped + cancellation-safe (CatalogPrewarmService).
+                val isSeriesMeta = meta.type.lowercase() in setOf("series", "show", "tv", "tvshow")
+                LaunchedEffect(meta.id, meta.type, seriesAction?.seasonNumber, seriesAction?.episodeNumber) {
+                    if (isSeriesMeta) {
+                        // Prewarm the up-next/selected episode (tt:S:E) for instant resume.
+                        val season = seriesAction?.seasonNumber
+                        val episode = seriesAction?.episodeNumber
+                        if (season != null && episode != null && meta.id.isNotBlank()) {
+                            CatalogPrewarmService.prewarm("series", "${meta.id}:$season:$episode")
+                            // Client-side warm: pre-resolve the top Tier-2 cached stream to a
+                            // direct CDN url and cache it (ResolvedStreamCache) so Play is instant.
+                            // (Mirrors NuvioTV's StreamWarmer.warm on the up-next episode.)
+                            StreamWarmer.warm(
+                                type = "series",
+                                videoId = meta.id,
+                                season = season,
+                                episode = episode,
+                            )
+                            // r15: prefetch the addon subtitle CANDIDATE list NOW (matches the
+                            // player's activeVideoId tt:S:E). Having addonSubtitles populated before
+                            // the player composes lets it bundle every candidate into the INITIAL
+                            // MediaItem, so the FIRST subtitle switch is pure track selection (no
+                            // re-prepare / no video restart).
+                            SubtitleRepository.prewarmAddonSubtitles(
+                                "series",
+                                "${meta.id}:$season:$episode",
+                            )
+                        }
+                    } else if (meta.id.isNotBlank()) {
+                        CatalogPrewarmService.prewarm("movie", meta.id)
+                        StreamWarmer.warm(type = "movie", videoId = meta.id)
+                        // r15: prefetch addon subtitles for the movie (see series note above).
+                        SubtitleRepository.prewarmAddonSubtitles("movie", meta.id)
+                    }
+                }
+
                 val hasProductionSection = remember(meta) {
                     meta.productionCompanies.isNotEmpty() || meta.networks.isNotEmpty()
                 }

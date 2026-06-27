@@ -1,5 +1,6 @@
 package com.nuvio.app.features.debrid
 
+import com.nuvio.app.core.network.BackendAuth
 import com.nuvio.app.features.streams.StreamBehaviorHints
 import com.nuvio.app.features.streams.StreamClientResolve
 import com.nuvio.app.features.streams.StreamDebridCacheState
@@ -109,19 +110,30 @@ object DirectDebridPlaybackResolver {
         }
     }
 
+    private fun sharedTorboxAvailable(): Boolean =
+        SharedTorboxKeyService.isConfigured() && BackendAuth.currentAccessToken() != null
+
     fun shouldResolveToPlayableStream(stream: StreamItem): Boolean {
         val settings = DebridSettingsRepository.snapshot()
-        if (!settings.canResolvePlayableLinks) return false
         if (stream.needsLocalDebridResolve) {
+            if (!settings.canResolvePlayableLinks) return false
             return stream.isInstalledAddonStream && localTorrentResolveCredential(settings) != null
         }
         if (!stream.isInstalledAddonStream || !stream.isDirectDebridStream || stream.playableDirectUrl != null) {
             return false
         }
         val providerId = DebridProviders.byId(stream.clientResolve?.service)?.id ?: return false
-        return providerId == settings.activeResolverProviderId &&
-            settings.apiKeyFor(providerId).isNotBlank() &&
-            DebridProviderApis.apiFor(providerId) != null
+        if (DebridProviderApis.apiFor(providerId) == null) return false
+        // Own key: always use it when configured and enabled.
+        if (settings.canResolvePlayableLinks &&
+            providerId == settings.activeResolverProviderId &&
+            settings.apiKeyFor(providerId).isNotBlank()
+        ) return true
+        // Shared backend key: available for backend-managed addon streams when authenticated.
+        if (providerId == DebridProviders.TORBOX_ID && stream.isInstalledAddonStream) {
+            return sharedTorboxAvailable()
+        }
+        return false
     }
 
     private suspend fun resolveUncached(stream: StreamItem, season: Int?, episode: Int?): DirectDebridResolveResult {
@@ -131,14 +143,18 @@ object DirectDebridPlaybackResolver {
         val providerId = DebridProviders.byId(stream.clientResolve?.service)?.id
             ?: return DirectDebridResolveResult.Error
         val settings = DebridSettingsRepository.snapshot()
-        if (providerId != settings.activeResolverProviderId) {
+        val userKey = settings.apiKeyFor(providerId).trim().takeIf { it.isNotBlank() }
+        // Shared backend TorBox key bypasses the personal-key gate: a user without their
+        // own key still resolves via the platform key. Only gate on activeResolverProviderId
+        // when no shared key path is available.
+        val resolvedKey: String? = userKey
+            ?: if (providerId == DebridProviders.TORBOX_ID && sharedTorboxAvailable()) {
+                SharedTorboxKeyService.getKey()
+            } else null
+        if (resolvedKey == null && providerId != settings.activeResolverProviderId) {
             return DirectDebridResolveResult.Stale
         }
-        val apiKey = settings
-            .apiKeyFor(providerId)
-            .trim()
-            .takeIf { it.isNotBlank() }
-            ?: return DirectDebridResolveResult.MissingApiKey
+        val apiKey: String = resolvedKey ?: return DirectDebridResolveResult.MissingApiKey
         val api = DebridProviderApis.apiFor(providerId) ?: return DirectDebridResolveResult.Error
         return api.resolveClientStream(stream, apiKey, season, episode)
     }

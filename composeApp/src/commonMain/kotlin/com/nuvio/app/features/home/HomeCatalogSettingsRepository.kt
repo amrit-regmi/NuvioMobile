@@ -1,5 +1,6 @@
 package com.nuvio.app.features.home
 
+import co.touchlab.kermit.Logger
 import com.nuvio.app.features.addons.ManagedAddon
 import com.nuvio.app.features.collection.Collection
 import com.nuvio.app.features.collection.CollectionRepository
@@ -97,6 +98,7 @@ private data class StoredHomeCatalogSettingsPayload(
 
 object HomeCatalogSettingsRepository {
     const val HERO_SOURCE_SELECTION_LIMIT = 2
+    private val log = Logger.withTag("HomeCatalogSettingsRepo")
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -126,6 +128,14 @@ object HomeCatalogSettingsRepository {
      */
     private var rowOrderRecoPrefs: Map<String, Pair<Int, Boolean>> = emptyMap()
 
+    /**
+     * Builtin catalog keys that the TV's `rowOrder` explicitly listed (set by [applyFromRemote]).
+     * Non-empty only when TV's rowOrder actually contained `kind="builtin"` entries.
+     * Used in [normalizePreferences] to default-disable builtin rows not authorized by TV,
+     * regardless of whether [syncCatalogs] runs before or after [applyFromRemote].
+     */
+    private var tvAuthorizedBuiltinKeys: Set<String> = emptySet()
+
     fun onProfileChanged() {
         hasLoaded = false
         preferences.clear()
@@ -139,6 +149,7 @@ object HomeCatalogSettingsRepository {
         lastFetchedRecoRows = emptyList()
         collectionDefinitions = emptyList()
         rowOrderRecoPrefs = emptyMap()
+        tvAuthorizedBuiltinKeys = emptySet()
         _uiState.value = HomeCatalogSettingsUiState()
     }
 
@@ -155,6 +166,7 @@ object HomeCatalogSettingsRepository {
         useBuiltinCatalog = true
         useRecommendations = true
         rowOrderRecoPrefs = emptyMap()
+        tvAuthorizedBuiltinKeys = emptySet()
         _uiState.value = HomeCatalogSettingsUiState()
     }
 
@@ -189,12 +201,17 @@ object HomeCatalogSettingsRepository {
         // The reco row key is "reco_engine:${contentType}:${reasonType_index}" (e.g.
         // "reco_engine:movie:personal_0"). The TV rowOrder stores just the base reason_type
         // (e.g. "personal"), so we strip the trailing "_<index>" to match.
+        log.i { "syncRecoRows: ${recoRows.size} rows, rowOrderRecoPrefs keys=${rowOrderRecoPrefs.keys.take(10)}" }
         if (rowOrderRecoPrefs.isNotEmpty()) {
             for (row in recoRows) {
                 val baseReasonType = row.reasonType.substringBeforeLast('_')
                 val lookupKey = "${row.contentType.orEmpty()}:$baseReasonType"
                 // Rows absent from rowOrder are disabled — TV's rowOrder is the authority.
-                val (order, enabled) = rowOrderRecoPrefs[lookupKey] ?: Pair(Int.MAX_VALUE, false)
+                val match = rowOrderRecoPrefs[lookupKey]
+                // Absent from rowOrder = never seen before; show at end by default.
+                // Only rows explicitly listed with enabled=false should be hidden.
+                val (order, enabled) = match ?: Pair(Int.MAX_VALUE, true)
+                log.i { "syncRecoRows: row ${row.reasonType} (${row.contentType}) → key=$lookupKey match=${match != null} enabled=$enabled" }
                 val rowKey = row.key
                 preferences[rowKey] = StoredHomeCatalogPreference(
                     key = rowKey,
@@ -202,6 +219,20 @@ object HomeCatalogSettingsRepository {
                     enabled = enabled,
                     heroSourceEnabled = false,
                     order = order,
+                )
+            }
+        } else {
+            // No rowOrder from TV yet — explicitly enable all reco rows so stale persisted
+            // enabled=false values (from an older build) don't suppress rows indefinitely.
+            log.w { "syncRecoRows: rowOrderRecoPrefs is EMPTY — enabling all ${recoRows.size} rows by default" }
+            for (row in recoRows) {
+                val rowKey = row.key
+                preferences[rowKey] = StoredHomeCatalogPreference(
+                    key = rowKey,
+                    customTitle = preferences[rowKey]?.customTitle.orEmpty(),
+                    enabled = true,
+                    heroSourceEnabled = false,
+                    order = preferences[rowKey]?.order ?: Int.MAX_VALUE,
                 )
             }
         }
@@ -322,6 +353,7 @@ object HomeCatalogSettingsRepository {
         preferences.clear()
         lastFetchedRecoRows = emptyList()
         rowOrderRecoPrefs = emptyMap()
+        tvAuthorizedBuiltinKeys = emptySet()
         normalizePreferences()
         publish()
         persist()
@@ -421,10 +453,19 @@ object HomeCatalogSettingsRepository {
             if (heroSourceEnabled) {
                 enabledHeroSourceCount += 1
             }
+            // Default enabled state: true unless TV's rowOrder is authoritative for builtin
+            // rows and this builtin key wasn't listed — handles the race where normalizePreferences
+            // runs after syncCatalogs but before applyFromRemote has disabled the adult rows.
+            val isBuiltinRow = entry.key.startsWith("community.hamrocinema-catalog:")
+            val defaultEnabled = if (
+                isBuiltinRow &&
+                tvAuthorizedBuiltinKeys.isNotEmpty() &&
+                entry.key !in tvAuthorizedBuiltinKeys
+            ) false else true
             normalized[entry.key] = StoredHomeCatalogPreference(
                 key = entry.key,
                 customTitle = stored?.customTitle.orEmpty(),
-                enabled = stored?.enabled ?: true,
+                enabled = stored?.enabled ?: defaultEnabled,
                 heroSourceEnabled = heroSourceEnabled,
                 order = stored?.order ?: nextOrder++,
             )
@@ -666,7 +707,13 @@ object HomeCatalogSettingsRepository {
                         // include a disambiguating index suffix (e.g. "personal_0"). Store the
                         // TV order/enabled keyed by "${contentType}:${baseReasonType}" so
                         // syncRecoRows() can match them when the rows arrive.
-                        val lookupKey = "${entry.type}:${entry.id}"
+                        // TV writes "tv" for series content; /reco returns "series". Normalise
+                        // here so the lookup key always matches what syncRecoRows() sees.
+                        val normalizedType = when (entry.type.lowercase()) {
+                            "tv", "tvshow", "show" -> "series"
+                            else -> entry.type
+                        }
+                        val lookupKey = "$normalizedType:${entry.id}"
                         newRecoPrefs[lookupKey] = Pair(index, entry.enabled)
                     }
                     "addon" -> {
@@ -678,18 +725,23 @@ object HomeCatalogSettingsRepository {
                 }
             }
 
-            // TV is the authority for builtin rows. Any builtin row NOT present in the TV's
-            // rowOrder must be disabled — it may have been hidden for this profile (e.g. kids
-            // profile hides new_releases/movie). Without this, stale enabled=true preferences
-            // from other profiles bleed through after a profile switch.
-            newPrefs.keys
-                .filter { it.startsWith("community.hamrocinema-catalog:") && it !in seenBuiltinKeys }
-                .forEach { key ->
-                    val existing = newPrefs[key]
-                    if (existing != null && existing.enabled) {
-                        newPrefs[key] = existing.copy(enabled = false)
+            // TV is the authority for builtin rows. Persist which keys TV authorized so
+            // normalizePreferences can enforce this constraint regardless of call order
+            // (fixes race where syncCatalogs runs after applyFromRemote and re-enables rows).
+            if (seenBuiltinKeys.isNotEmpty()) {
+                tvAuthorizedBuiltinKeys = seenBuiltinKeys.toSet()
+                // Also disable any builtin rows already in preferences that TV didn't list.
+                newPrefs.keys
+                    .filter { it.startsWith("community.hamrocinema-catalog:") && it !in seenBuiltinKeys }
+                    .forEach { key ->
+                        val existing = newPrefs[key]
+                        if (existing != null && existing.enabled) {
+                            newPrefs[key] = existing.copy(enabled = false)
+                        }
                     }
-                }
+            } else {
+                tvAuthorizedBuiltinKeys = emptySet()
+            }
 
             rowOrderRecoPrefs = newRecoPrefs
             preferences = newPrefs

@@ -164,14 +164,74 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
         playerController?.applySubtitleStyle(subtitleStyle)
     }
 
-    LaunchedEffect(activeSourceUrl, addonSubtitleFetchKey, playerSettingsUiState.addonSubtitleStartupMode) {
-        val fetchKey = addonSubtitleFetchKey ?: return@LaunchedEffect
-        if (playerSettingsUiState.addonSubtitleStartupMode == AddonSubtitleStartupMode.FAST_STARTUP) {
-            return@LaunchedEffect
+    // Probe addon subtitles IMMEDIATELY at player open with NO manual user tap and NO dependency on
+    // the stream being ready. The best-per-lang `/subtitles/best` set is cheap (≤3, server-ordered,
+    // and typically already cached from the details-open prewarm), so we fetch it right away — it
+    // lands inside the initial-prepare bundle window and the subtitles attach at the FIRST prepare.
+    // This deliberately overrides FAST_STARTUP's old "defer until !isLoading" behaviour: chaining the
+    // fetch to playback readiness meant a slow-buffering stream blocked subtitles for tens of seconds,
+    // so they arrived post-prepare and forced a fold/re-prepare (the "stream restarts + second
+    // spinner" bug). Probing up-front is independent of how long the stream takes to buffer.
+    LaunchedEffect(
+        activeSourceUrl,
+        addonSubtitleFetchKey,
+    ) {
+        // STEP 1 — pulsating-phase instant restore (addon-INDEPENDENT). The details-open prewarm has
+        // usually already resolved the best-per-lang set into the persistent cache (~300ms). The
+        // source-open clear() just wiped the visible list, so restore it from cache RIGHT NOW — no
+        // network, no waiting on installed addons to load. This lands inside the initial-prepare
+        // bundle window, so the subs attach at the FIRST prepare with no late fold / stream restart.
+        // (This is keyed on activeSourceUrl too, so it re-runs AFTER clear() on every source open.)
+        val restoreType = activeAddonSubtitleType.takeIf { it.isNotBlank() }
+        val restoreVideoId = activeVideoId?.takeIf { it.isNotBlank() }
+        if (restoreType != null && restoreVideoId != null) {
+            SubtitleRepository.restoreFromCache(restoreType, restoreVideoId)
         }
+        // STEP 2 — full network fetch for the cache-MISS case (needs installed addons loaded). If
+        // STEP 1 hit, fetchAddonSubtitles dedups this to a no-op; on a miss this resolves on demand
+        // and we accept the rare fold.
+        val fetchKey = addonSubtitleFetchKey ?: return@LaunchedEffect
         if (autoFetchedAddonSubtitlesForKey == fetchKey) return@LaunchedEffect
         autoFetchedAddonSubtitlesForKey = fetchKey
         fetchAddonSubtitlesForActiveItem()
+    }
+
+    // Fix 1/2: PRELOAD all fetched addon subtitles into the player as selectable text tracks the
+    // moment they arrive. After this single merge, switching/auto-applying a subtitle is pure track
+    // selection — it never rebuilds the MediaItem or re-prepares the stream (no video restart, no
+    // loading spinner). The auto-apply effect below then selects the preferred track via
+    // setSubtitleUri's track-selection fast path.
+    LaunchedEffect(playerController, addonSubtitles) {
+        val controller = playerController ?: return@LaunchedEffect
+        controller.setExternalSubtitles(
+            addonSubtitles.map { sub ->
+                ExternalSubtitleInput(
+                    url = sub.url,
+                    language = sub.language,
+                    label = sub.display,
+                )
+            }
+        )
+    }
+
+    // Auto-apply the highest-preference addon (our-backend) subtitle on playback start with
+    // NO manual user tap. Runs once our backend subtitles have loaded and playback is ready.
+    // Embedded/internal tracks still win first (refreshTracks selects those, setting
+    // preferredSubtitleSelectionApplied); this only fires when no internal track was chosen
+    // and the user hasn't already selected something.
+    LaunchedEffect(
+        addonSubtitles,
+        playbackSnapshot.isLoading,
+        playerController,
+        selectedAddonSubtitleId,
+        selectedSubtitleIndex,
+    ) {
+        if (playerController == null || playbackSnapshot.isLoading) return@LaunchedEffect
+        // Fix 2: auto-apply the preferred addon subtitle in ALL startup modes (including
+        // FAST_STARTUP). Selection goes through setSubtitleUri's lazy bundle-then-track-selection
+        // path, so the first auto-apply performs a single attach and every later switch is free.
+        if (addonSubtitles.isEmpty()) return@LaunchedEffect
+        autoApplyPreferredAddonSubtitleIfNeeded()
     }
 
     LaunchedEffect(playbackSnapshot.isLoading, playerController) {

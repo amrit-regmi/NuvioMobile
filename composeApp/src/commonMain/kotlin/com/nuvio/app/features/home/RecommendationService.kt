@@ -65,25 +65,25 @@ object RecommendationService {
     private val log = Logger.withTag("RecommendationService")
     private val json = Json { ignoreUnknownKeys = true }
 
-    private const val LIMIT_PER_ROW = 18
-
     /** Returns reco rows for the active signed-in profile, or empty when unavailable. */
     suspend fun fetchRows(): List<RecoRow> {
         val authState = AuthRepository.state.value
         if (authState !is AuthState.Authenticated || authState.isAnonymous) return emptyList()
-        val userId = authState.userId
 
-        // TV calls: GET /reco/home/{supabase_uuid}?profile_id={numeric_id}&limit_per_row=N
-        val profileId = ProfileRepository.activeProfileId
-        val url = "${PrivateBackend.recoBaseUrl}/home/$userId?profile_id=$profileId&limit_per_row=$LIMIT_PER_ROW"
-        val headers = buildMap {
-            putAll(BackendAuth.authHeadersFor(url))
-            put("X-Profile-Id", profileId.toString())
-        }
+        // Mirror the TV: use /reco/for/{uuid} (pre-computed cache + full engine with
+        // series fallback) rather than /reco/home (simpler live path, no series rows).
+        val userId = authState.userId
+        val url = "${PrivateBackend.recoBaseUrl}/for/$userId"
+        // Mirror the TV: send X-Profile-Id so the backend resolves to a profile-level
+        // te_user_id (not account-level), giving each profile its own reco model.
+        val profileId = ProfileRepository.activeProfileId.toString()
+        val headers = BackendAuth.authHeadersFor(url) + mapOf("X-Profile-Id" to profileId)
         if (!headers.containsKey("Authorization")) return emptyList()
 
         return runCatching {
+            log.i { "Fetching reco rows: $url" }
             val payload = httpGetTextWithHeaders(url, headers)
+            log.i { "Reco response (${payload.length} chars): ${payload.take(300)}" }
             parseRows(payload)
         }.onFailure { error ->
             log.w(error) { "Failed to fetch reco rows from $url" }
@@ -97,6 +97,8 @@ object RecommendationService {
             val obj = element.jsonObject
             val label = obj.str("label")?.takeIf { it.isNotBlank() } ?: return@mapIndexedNotNull null
             val rawReasonType = obj.str("reason_type") ?: "personal"
+            // "continue" rows belong to the Continue Watching widget, not the catalog.
+            if (rawReasonType == "continue" || rawReasonType == "continue_watching") return@mapIndexedNotNull null
             // Mirror the TV's _RECO_REASON_TO_DASHBOARD_ID mapping so our keys
             // match the ids written to rowOrder by the TV app.
             val reasonType = when (rawReasonType) {

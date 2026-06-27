@@ -58,7 +58,9 @@ import com.nuvio.app.features.watchprogress.WatchProgressStorage
 
 class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
-        installSplashScreen()
+        // Remove the OS splash the instant the first Compose frame is ready so the static splash
+        // window never lingers — the animated CineXSplash takes over immediately.
+        installSplashScreen().setOnExitAnimationListener { it.remove() }
         enableEdgeToEdge(
             navigationBarStyle = SystemBarStyle.dark(
                 scrim = 0xFF020404.toInt(),
@@ -117,6 +119,7 @@ class MainActivity : AppCompatActivity() {
         EpisodeReleaseNotificationPlatform.initialize(applicationContext)
         EpisodeReleaseNotificationPlatform.bindActivity(this)
         handleIncomingAppIntent(intent)
+        DeviceCapabilityRegistrar.registerAsync(applicationContext)
 
         setContent {
             App()

@@ -55,6 +55,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.core.auth.AuthRepository
+import com.nuvio.app.core.ui.CineXLoader
 import com.nuvio.app.core.ui.nuvioOverlayGradientBrush
 import com.nuvio.app.core.ui.NuvioPrimaryButton
 import com.nuvio.app.core.ui.NuvioSurfaceCard
@@ -280,10 +281,7 @@ fun AuthScreen(
                             .padding(top = 4.dp),
                         contentAlignment = Alignment.Center,
                     ) {
-                        CircularProgressIndicator(
-                            color = MaterialTheme.colorScheme.primary,
-                            strokeWidth = 2.5.dp,
-                        )
+                        CineXLoader(size = 40.dp)
                     }
                 }
 

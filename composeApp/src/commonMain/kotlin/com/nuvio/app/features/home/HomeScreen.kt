@@ -39,6 +39,8 @@ import com.nuvio.app.features.home.components.HomeHeroReservedSpace
 import com.nuvio.app.features.home.components.HomeHeroSection
 import com.nuvio.app.features.home.components.HomeSkeletonHero
 import com.nuvio.app.features.home.components.HomeSkeletonRow
+import com.nuvio.app.core.auth.AuthRepository
+import com.nuvio.app.core.auth.AuthState
 import com.nuvio.app.features.trakt.TraktAuthRepository
 import com.nuvio.app.features.trakt.TRAKT_CONTINUE_WATCHING_DAYS_CAP_ALL
 import com.nuvio.app.features.trakt.TraktSettingsRepository
@@ -140,6 +142,15 @@ fun HomeScreen(
         TraktAuthRepository.isAuthenticated
     }.collectAsStateWithLifecycle()
     var observedOfflineState by remember { mutableStateOf(false) }
+
+    // Reco rows are fetched async and gated on auth. When the Supabase session loads
+    // after the first refresh(), reco rows would never appear. Re-trigger when auth settles.
+    val authState by AuthRepository.state.collectAsStateWithLifecycle()
+    LaunchedEffect(authState) {
+        if (authState is AuthState.Authenticated && !(authState as AuthState.Authenticated).isAnonymous) {
+            HomeRepository.refreshRecommendations(force = false)
+        }
+    }
 
     LaunchedEffect(scrollToTopRequests) {
         scrollToTopRequests.collect {

@@ -139,7 +139,9 @@ object MetaDetailsRepository {
 
             for (manifest in manifests) {
                 val result = withContext(Dispatchers.Default) {
-                    tryFetchMeta(manifest, type, metaLookupId, includeMdbList = false)
+                    withTimeoutOrNull(FETCH_TIMEOUT_MS) {
+                        tryFetchMeta(manifest, type, metaLookupId, includeMdbList = false)
+                    }
                 }
                 if (result != null) {
                     publishLoadedMeta(

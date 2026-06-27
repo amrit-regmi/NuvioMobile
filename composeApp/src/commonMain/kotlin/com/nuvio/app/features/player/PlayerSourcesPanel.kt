@@ -70,6 +70,12 @@ fun PlayerSourcesPanel(
         StreamBadgeSettingsRepository.ensureLoaded()
         StreamBadgeSettingsRepository.uiState
     }.collectAsStateWithLifecycle()
+    // Fix 3: a backend (shared-TorBox) stream is playable even without a personal debrid key, so the
+    // panel must mirror StreamsScreen's selectable logic — otherwise backend streams render disabled.
+    val sharedTorboxAvailable = remember(debridSettings) {
+        com.nuvio.app.features.debrid.SharedTorboxKeyService.isConfigured() &&
+            com.nuvio.app.core.network.BackendAuth.currentAccessToken() != null
+    }
 
     AnimatedVisibility(
         visible = visible,
@@ -217,7 +223,10 @@ fun PlayerSourcesPanel(
                                         )
                                         StreamCard(
                                             stream = stream,
-                                            enabled = stream.isSelectableForPlayback(debridSettings.canResolvePlayableLinks),
+                                            enabled = stream.isSelectableForPlayback(
+                                                debridEnabled = debridSettings.canResolvePlayableLinks,
+                                                sharedTorboxAvailable = sharedTorboxAvailable,
+                                            ),
                                             appendInstantServiceToDefaultName = debridSettings.canResolvePlayableLinks &&
                                                 !debridSettings.hasCustomStreamFormatting,
                                             showFileSizeBadges = streamBadgeSettings.showFileSizeBadges,

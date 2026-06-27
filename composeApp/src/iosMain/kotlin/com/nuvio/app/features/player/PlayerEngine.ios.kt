@@ -192,8 +192,8 @@ actual fun PlatformPlayerSurface(
                 }
             }
 
-            override fun setSubtitleUri(url: String) {
-                Logger.d(TAG) { "setSubtitleUri: $url" }
+            override fun setSubtitleUri(url: String, language: String, label: String) {
+                Logger.d(TAG) { "setSubtitleUri: $url language=$language label=$label" }
                 bridge.setSubtitleUrl(url)
             }
 

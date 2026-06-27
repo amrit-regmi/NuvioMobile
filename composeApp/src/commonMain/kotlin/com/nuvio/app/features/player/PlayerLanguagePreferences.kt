@@ -188,6 +188,17 @@ val AvailableLanguageOptions: List<LanguagePreferenceOption> = listOf(
     LanguagePreferenceOption("zu", Res.string.lang_zulu),
 )
 
+/**
+ * Subtitle primary/secondary pickers are limited to the only languages our backend
+ * subtitle sources support (English / Swedish / Finnish). Audio pickers keep the full
+ * [AvailableLanguageOptions] list.
+ */
+val SupportedSubtitleLanguageOptions: List<LanguagePreferenceOption> = listOf(
+    LanguagePreferenceOption("en", Res.string.lang_english),
+    LanguagePreferenceOption("sv", Res.string.lang_swedish),
+    LanguagePreferenceOption("fi", Res.string.lang_finnish),
+)
+
 private val LanguageCodeAliases = mapOf(
     "pt-pt" to "pt",
     "pt_br" to "pt-BR",

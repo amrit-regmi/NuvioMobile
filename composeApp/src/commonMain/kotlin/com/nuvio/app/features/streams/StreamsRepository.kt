@@ -71,6 +71,28 @@ object StreamsRepository {
         )
     }
 
+    /**
+     * Swaps in the warm-resolved direct url for any direct-debrid stream in [group] that has a fresh
+     * entry in [ResolvedStreamCache] but no playable url yet, flipping it to a ready/"Tier-1" state.
+     * Synchronous (cache reads are non-suspending); returns the SAME instance when nothing changed
+     * so callers can cheaply detect no-ops. Only fresh (un-expired) entries are promoted, so the
+     * baked url is always within the cache TTL window.
+     */
+    private fun promoteGroupFromCache(group: AddonStreamGroup, season: Int?, episode: Int?): AddonStreamGroup {
+        if (group.streams.none { it.isDirectDebridStream && it.playableDirectUrl == null }) return group
+        var changed = false
+        val streams = group.streams.map { stream ->
+            if (stream.isDirectDebridStream && stream.playableDirectUrl == null) {
+                val resolvedUrl = ResolvedStreamCache.get(stream, season, episode)
+                if (!resolvedUrl.isNullOrBlank()) {
+                    changed = true
+                    stream.copy(url = resolvedUrl)
+                } else stream
+            } else stream
+        }
+        return if (changed) group.copy(streams = streams) else group
+    }
+
     private fun load(type: String, videoId: String, parentMetaId: String?, season: Int?, episode: Int?, manualSelection: Boolean, forceRefresh: Boolean) {
         val pluginUiState = if (AppFeaturePolicy.pluginsEnabled) {
             PluginRepository.initialize()
@@ -99,6 +121,26 @@ object StreamsRepository {
         activeRequestKey = requestKey
         activeJob?.cancel()
         _uiState.value = StreamsUiState(requestToken = requestToken)
+
+        // Promote any stream that gets debrid-resolved in the background (StreamWarmer) WHILE this
+        // list is open to a ready/"Tier-1" state by swapping in its resolved direct url — so the
+        // backend's top (best-for-device) stream becomes instantly-playable before the user taps
+        // Play. Guarded by [requestToken] so a stale screen no-ops. The publish path also promotes
+        // already-cached streams synchronously (see presentStreamGroup) for warms that finished
+        // before this list rendered.
+        ResolvedStreamCache.setOnResolved {
+            if (_uiState.value.requestToken != requestToken) return@setOnResolved
+            _uiState.update { current ->
+                if (current.requestToken != requestToken) return@update current
+                var changed = false
+                val groups = current.groups.map { group ->
+                    val promoted = promoteGroupFromCache(group, season, episode)
+                    if (promoted !== group) changed = true
+                    promoted
+                }
+                if (changed) current.copy(groups = groups) else current
+            }
+        }
 
         PlayerSettingsRepository.ensureLoaded()
         val playerSettings = PlayerSettingsRepository.uiState.value
@@ -357,10 +399,13 @@ object StreamsRepository {
                     groups = listOf(group),
                     rules = streamBadgeRules,
                 ).firstOrNull() ?: group
-                return DebridStreamPresentation.apply(
+                val presented = DebridStreamPresentation.apply(
                     groups = listOf(badgeGroup),
                     settings = debridSettings,
                 ).firstOrNull() ?: badgeGroup
+                // If StreamWarmer already resolved a stream (e.g. on details-open, before this list
+                // even rendered), promote it to a ready/"Tier-1" state at publish time.
+                return promoteGroupFromCache(presented, season, episode)
             }
 
             fun publishAddonGroup(group: AddonStreamGroup) {
@@ -544,11 +589,13 @@ object StreamsRepository {
 
             resolvedStreamAddons.forEach { addon ->
                 launch {
-                    val url = buildAddonResourceUrl(
-                        manifestUrl = addon.manifest.transportUrl,
-                        resource = "stream",
-                        type = type,
-                        id = streamId,
+                    val url = com.nuvio.app.core.network.PrivateBackend.withDeviceProfile(
+                        buildAddonResourceUrl(
+                            manifestUrl = addon.manifest.transportUrl,
+                            resource = "stream",
+                            type = type,
+                            id = streamId,
+                        )
                     )
                     log.d { "Fetching streams from: $url" }
 

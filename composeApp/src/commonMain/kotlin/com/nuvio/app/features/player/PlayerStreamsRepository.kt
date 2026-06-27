@@ -179,7 +179,21 @@ object PlayerStreamsRepository {
             return
         }
 
-        val installedAddons = AddonRepository.uiState.value.addons.enabledAddons()
+        // Fix 3: the in-player Sources panel must draw from the SAME stream sources as the details
+        // screen. In this private-backend fork the primary stream provider is the backend
+        // catalog-addon held in ContentSourceProvider (gated by the stream-provider toggle), NOT
+        // AddonRepository — so previously this panel only saw third-party addons and rendered empty
+        // even when the backend returned streams. Mirror StreamsRepository's source assembly:
+        // backend content addon(s) + any installed third-party addons.
+        val streamProviderEnabled =
+            com.nuvio.app.features.settings.BuiltInProvidersSettingsRepository.isStreamProviderEnabled()
+        val cachedAddons = if (streamProviderEnabled) {
+            com.nuvio.app.core.content.ContentSourceProvider.cachedContentAddons +
+                AddonRepository.uiState.value.addons
+        } else {
+            AddonRepository.uiState.value.addons
+        }
+        val installedAddons = cachedAddons.enabledAddons()
         PlayerSettingsRepository.ensureLoaded()
         val playerSettings = PlayerSettingsRepository.uiState.value
         val debridSettings = DebridSettingsRepository.snapshot()
@@ -192,6 +206,33 @@ object PlayerStreamsRepository {
             repositories = pluginUiState.repositories,
             groupByRepository = pluginUiState.groupStreamsByRepository,
         )
+
+        // Fix 3: if the backend catalog-addon cache hasn't been primed yet (e.g. player opened via a
+        // warm/deep-link path without visiting Home first), prime it and re-resolve once instead of
+        // showing an empty panel. Mirrors StreamsRepository's cacheNeedsPrime handling.
+        val cacheNeedsPrime = streamProviderEnabled &&
+            com.nuvio.app.core.content.ContentSourceProvider.cachedContentAddons.isEmpty()
+        if (cacheNeedsPrime && installedAddons.isEmpty() && pluginProviderGroups.isEmpty()) {
+            stateFlow.value = StreamsUiState(isAnyLoading = true)
+            val primeJob = scope.launch {
+                com.nuvio.app.core.content.ContentSourceProvider.prime()
+                setRequestKey(null)
+                fetchStreams(
+                    type = type,
+                    videoId = videoId,
+                    season = season,
+                    episode = episode,
+                    forceRefresh = true,
+                    stateFlow = stateFlow,
+                    requestKeyHolder = requestKeyHolder,
+                    setRequestKey = setRequestKey,
+                    jobHolder = jobHolder,
+                    setJob = setJob,
+                )
+            }
+            setJob(primeJob)
+            return
+        }
 
         if (installedAddons.isEmpty() && pluginProviderGroups.isEmpty()) {
             stateFlow.value = StreamsUiState(

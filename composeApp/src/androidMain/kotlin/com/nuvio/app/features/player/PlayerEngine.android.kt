@@ -78,6 +78,13 @@ import java.net.URL
 
 private const val TAG = "NuvioPlayer"
 
+// r15: how long the FIRST prepare() will wait for async addon subtitle candidates to arrive so they
+// can be bundled into the initial MediaItem (making the first subtitle switch pure track selection).
+// Kept short so startup isn't delayed when no addon subtitles exist / they're slow; whatever cached
+// candidates have arrived by the deadline are bundled, the rest fall back to the post-prepare fold.
+private const val INITIAL_SUBTITLE_BUNDLE_WAIT_MS = 3_000L
+private const val INITIAL_SUBTITLE_BUNDLE_POLL_MS = 50L
+
 @androidx.annotation.OptIn(UnstableApi::class)
 @Composable
 actual fun PlatformPlayerSurface(
@@ -220,22 +227,31 @@ private fun ExoPlayerSurface(
     )
     var subtitleDelayMs by remember(playerSourceKey) { mutableStateOf(0) }
     var selectedExternalSubtitleMimeType by remember(playerSourceKey) { mutableStateOf<String?>(null) }
+    // Fix 1/2: external (addon) subtitle CANDIDATES (the prewarmed en/sv/fi set delivered by
+    // setExternalSubtitles). These are folded into the media item EXACTLY ONCE — the moment they
+    // first arrive — so the player has a single clean re-prepare (position preserved) and from then
+    // on every auto-apply / switch is pure TRACK SELECTION (no prepare(), no video restart, no
+    // repeated decoder init that exhausts codecs with `required system resources: 6`).
+    // Keyed by source so it resets when the stream changes.
+    var addonSubtitleCandidates by remember(playerSourceKey) {
+        mutableStateOf<List<ExternalSubtitleInput>>(emptyList())
+    }
+    // URLs of external subtitles already attached to the media item as selectable text tracks.
+    // Once a URL is here, switching to it is pure track selection (no prepare). Reset per source.
+    val attachedExternalSubtitleUrls = remember(playerSourceKey) { mutableSetOf<String>() }
     val latestSubtitleDelayMs = rememberUpdatedState(subtitleDelayMs)
     val latestExternalSubtitleMimeType = rememberUpdatedState(selectedExternalSubtitleMimeType)
     var decoderPriorityOverride by remember(playerSourceKey) { mutableStateOf<Int?>(null) }
     var fallbackStartPositionMs by remember(playerSourceKey) { mutableStateOf<Long?>(null) }
     val effectiveDecoderPriority = decoderPriorityOverride ?: playerSettings.decoderPriority
 
-    val initialMediaItem = remember(playerSourceKey, externalSubtitles) {
-        val subtitleConfigs = externalSubtitles.mapNotNull { subtitle ->
-            val mimeType = resolveSubtitleMimeType(subtitle.url, subtitle.headers)
-            MediaItem.SubtitleConfiguration.Builder(Uri.parse(subtitle.url))
-                .setMimeType(mimeType)
-                .setLanguage(subtitle.language)
-                .setLabel(subtitle.name ?: subtitle.language)
-                .setRoleFlags(C.ROLE_FLAG_SUBTITLE)
-                .build()
-        }
+    // Fix 1/2/3: bundle EVERY known external subtitle (stream-attached + prewarmed addon candidates)
+    // into the media item with a stable id + clean human label up front, so the single prepare()
+    // already contains the subtitle tracks. Keyed on the candidate set so that when the (async)
+    // addon candidates first arrive, this recomputes ONCE and the prepare effect performs exactly
+    // one clean re-prepare with the position preserved.
+    val initialMediaItem = remember(playerSourceKey, externalSubtitles, addonSubtitleCandidates) {
+        val subtitleConfigs = buildExternalSubtitleConfigurations(externalSubtitles, addonSubtitleCandidates)
         playbackMediaItemFromUrl(
             url = sourceUrl,
             responseHeaders = sanitizedSourceResponseHeaders,
@@ -252,6 +268,31 @@ private fun ExoPlayerSurface(
 
     var resolvedMediaItem by remember(playerSourceKey) { mutableStateOf(initialMediaItem) }
     var probeAttempted by remember(playerSourceKey) { mutableStateOf(false) }
+    // r15: latest initialMediaItem snapshot so the (briefly deferred) FIRST prepare can grab the
+    // version that already bundles the async addon candidates, even though resolvedMediaItem still
+    // points at the empty-candidate item captured at composition time.
+    val latestInitialMediaItem = rememberUpdatedState(initialMediaItem)
+    // r15: whether the single initial prepare() has happened yet. Until it has, the candidate-fold
+    // effect must NOT re-prepare — instead the candidates are folded into the SAME initial prepare so
+    // the FIRST subtitle switch (and the auto-apply at start) is pure track selection, zero restart.
+    var initialPrepareDone by remember(playerSourceKey) { mutableStateOf(false) }
+    // r15: has setExternalSubtitles delivered the addon candidate set yet? The initial prepare waits
+    // briefly for this so the prewarmed en/sv/fi candidates ride the very first MediaItem.
+    var addonCandidatesDelivered by remember(playerSourceKey) { mutableStateOf(false) }
+    val latestAddonCandidatesDelivered = rememberUpdatedState(addonCandidatesDelivered)
+    // r16: true while a position-preserving re-prepare (the late-subtitle fold) is in flight, i.e.
+    // between calling prepare() and the next STATE_READY. The crash documented in
+    // feedback_mobile_debug_discipline ("repeated prepares exhaust the video decoder → reclaim")
+    // only happens when a SECOND re-prepare stacks on top of an in-flight one (two codec inits
+    // racing). This latch makes the fold strictly serial: a new candidate batch arriving mid-fold
+    // is deferred until the current re-prepare settles, so prepare() never overlaps itself.
+    var reprepareInFlight by remember(playerSourceKey) { mutableStateOf(false) }
+    // #87 / "wait 3s then option #2": late candidates (best subs that missed the initial-prepare
+    // window) must NOT auto-fold the moment they ARRIVE — that surprise re-prepare was the "fetching
+    // subtitles refreshes the stream" bug. Instead they sit unattached until the user (or auto-apply)
+    // actually SELECTS one; only then do we perform a single position-preserving re-prepare to attach
+    // it. setSubtitleUri sets this flag for an unbundled selection; the fold effect honors it.
+    var foldRequested by remember(playerSourceKey) { mutableStateOf(false) }
 
     val extractorsFactory = remember {
         DefaultExtractorsFactory()
@@ -361,12 +402,48 @@ private fun ExoPlayerSurface(
     }
 
     LaunchedEffect(exoPlayer, resolvedMediaItem) {
+        if (!initialPrepareDone) {
+            // r15: THE FIRST prepare. Briefly wait for the async addon subtitle candidates so they
+            // ride this single MediaItem — then EVERY subtitle switch (including the first) and the
+            // preferred-language auto-apply are pure track selection with no re-prepare. ExoPlayer
+            // does not download a SubtitleConfiguration's body until its track is selected, so
+            // bundling all (even 20-30) candidates here is cheap and must not slow startup; hence the
+            // short, bounded ceiling. We poll the rememberUpdatedState snapshot so that whatever
+            // candidates have been cached/delivered by the deadline are included.
+            val deadline = System.currentTimeMillis() + INITIAL_SUBTITLE_BUNDLE_WAIT_MS
+            while (
+                !latestAddonCandidatesDelivered.value &&
+                System.currentTimeMillis() < deadline &&
+                isActive
+            ) {
+                delay(INITIAL_SUBTITLE_BUNDLE_POLL_MS)
+            }
+            val mediaItem = latestInitialMediaItem.value
+            val configCount = mediaItem.localConfiguration?.subtitleConfigurations?.size ?: 0
+            Log.d(
+                TAG,
+                "initial prepare(): bundling $configCount external subtitle config(s) " +
+                    "(candidatesDelivered=${latestAddonCandidatesDelivered.value})",
+            )
+            // Mark every bundled subtitle url as attached so the fold effect is a no-op for them.
+            attachedExternalSubtitleUrls.addAll(externalSubtitles.map { it.url })
+            attachedExternalSubtitleUrls.addAll(addonSubtitleCandidates.map { it.url })
+            exoPlayer.setPlaybackMediaItem(mediaItem, fallbackStartPositionMs)
+            exoPlayer.prepare()
+            initialPrepareDone = true
+            return@LaunchedEffect
+        }
+        // Subsequent prepares (probe-MIME retry, decoder fallback) — these are genuine re-prepares,
+        // not subtitle switches. The candidate-fold path no longer triggers this for the first switch.
         val mediaItem = resolvedMediaItem ?: return@LaunchedEffect
         exoPlayer.setPlaybackMediaItem(mediaItem, fallbackStartPositionMs)
         exoPlayer.prepare()
     }
 
     val pendingSubtitleTrackIndex = remember { mutableListOf<Int>() }
+    // Fix 1/2: a preloaded external subtitle URI whose track hasn't surfaced yet; applied via track
+    // selection (no prepare) the moment it appears in onTracksChanged.
+    val pendingExternalSubtitleUri = remember { mutableListOf<String>() }
     val pendingAudioTrackSelection = remember { mutableListOf<TrackSelectionSnapshot>() }
     var playerViewRef by remember { mutableStateOf<PlayerView?>(null) }
     var currentSubtitleStyle by remember { mutableStateOf(SubtitleStyleState.DEFAULT) }
@@ -381,6 +458,37 @@ private fun ExoPlayerSurface(
         val selection = exoPlayer.captureSelectedTrack(C.TRACK_TYPE_AUDIO) ?: return
         pendingAudioTrackSelection.add(selection)
         Log.d(TAG, "$reason: preserving audio track index=${selection.index} id=${selection.id}")
+    }
+
+    // r15: the addon subtitle candidates now ride the INITIAL MediaItem (the first prepare waits
+    // briefly for them), so the FIRST switch / auto-apply is already pure track selection with ZERO
+    // re-prepare. This effect is now ONLY a last-resort fallback: it fires when a candidate arrives
+    // GENUINELY AFTER the initial prepare (e.g. it wasn't known/cached by the deadline) and is not
+    // yet attached as a text track. In that rare case we fold it in with a single position-preserving
+    // re-prepare. In the common case it is a complete no-op (every candidate already attached at
+    // initial prepare), so the first subtitle switch never re-prepares.
+    LaunchedEffect(exoPlayer, addonSubtitleCandidates, initialPrepareDone, reprepareInFlight, foldRequested) {
+        if (!initialPrepareDone) return@LaunchedEffect
+        // r16: never start a fold re-prepare while one is still settling — that stacked codec init is
+        // the decoder-reclaim crash. When the in-flight re-prepare reaches STATE_READY the latch
+        // clears, this effect re-runs (it's keyed on reprepareInFlight) and folds any candidates that
+        // arrived in the meantime in a single, serial re-prepare.
+        if (reprepareInFlight) return@LaunchedEffect
+        // #87 / option #2: do NOT fold just because late candidates arrived (that surprise restart was
+        // the reported bug). Only fold when a selection actually NEEDS an unbundled track — i.e.
+        // setSubtitleUri raised foldRequested. Mere fetching/arrival leaves them unattached, no restart.
+        if (!foldRequested) return@LaunchedEffect
+        val candidates = addonSubtitleCandidates
+        if (candidates.isEmpty()) { foldRequested = false; return@LaunchedEffect }
+        if (candidates.all { attachedExternalSubtitleUrls.contains(it.url) }) { foldRequested = false; return@LaunchedEffect }
+        attachedExternalSubtitleUrls.addAll(externalSubtitles.map { it.url })
+        attachedExternalSubtitleUrls.addAll(candidates.map { it.url })
+        val position = exoPlayer.currentPosition.coerceAtLeast(0L)
+        fallbackStartPositionMs = position
+        preserveAudioSelectionForReload("foldAddonSubtitleCandidates")
+        Log.d(TAG, "foldAddonSubtitleCandidates (fallback, post-initial-prepare): bundling ${candidates.size} candidate(s), single re-prepare at position=$position")
+        reprepareInFlight = true
+        resolvedMediaItem = initialMediaItem
     }
 
     DisposableEffect(exoPlayer) {
@@ -428,15 +536,10 @@ private fun ExoPlayerSurface(
                                 .setMimeType(probedMime)
                                 .setMediaId(sourceUrl)
                                 .apply {
-                                    val subtitleConfigs = externalSubtitles.mapNotNull { subtitle ->
-                                        val mimeType = resolveSubtitleMimeType(subtitle.url, subtitle.headers)
-                                        MediaItem.SubtitleConfiguration.Builder(Uri.parse(subtitle.url))
-                                            .setMimeType(mimeType)
-                                            .setLanguage(subtitle.language)
-                                            .setLabel(subtitle.name ?: subtitle.language)
-                                            .setRoleFlags(C.ROLE_FLAG_SUBTITLE)
-                                            .build()
-                                    }
+                                    val subtitleConfigs = buildExternalSubtitleConfigurations(
+                                        externalSubtitles,
+                                        addonSubtitleCandidates,
+                                    )
                                     if (subtitleConfigs.isNotEmpty()) {
                                         setSubtitleConfigurations(subtitleConfigs)
                                     }
@@ -464,6 +567,9 @@ private fun ExoPlayerSurface(
                 Log.d(TAG, "onPlaybackStateChanged: $stateName")
                 if (playbackState == Player.STATE_READY) {
                     fallbackStartPositionMs = null
+                    // r16: the (re-)prepare has settled — release the fold latch so any subtitle
+                    // candidates that arrived mid-fold can now fold in a fresh serial re-prepare.
+                    reprepareInFlight = false
                     latestOnError.value(null)
                     exoPlayer.logCurrentTracks("STATE_READY")
                 }
@@ -499,6 +605,19 @@ private fun ExoPlayerSurface(
                         .build()
                     if (idx >= 0) {
                         exoPlayer.selectTrackByIndex(C.TRACK_TYPE_TEXT, idx)
+                    }
+                }
+                // Fix 1/2: a preloaded external subtitle was requested before its track surfaced —
+                // apply it now via track selection (no prepare()).
+                if (pendingExternalSubtitleUri.isNotEmpty() && tracks.groups.isNotEmpty()) {
+                    val url = pendingExternalSubtitleUri.first()
+                    exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
+                        .buildUpon()
+                        .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                        .build()
+                    if (exoPlayer.selectExternalSubtitleByUri(url)) {
+                        Log.d(TAG, "onTracksChanged: applied pending external subtitle via track selection url=$url")
+                        pendingExternalSubtitleUri.removeAt(0)
                     }
                 }
                 latestOnSnapshot.value(exoPlayer.snapshot())
@@ -607,83 +726,100 @@ private fun ExoPlayerSurface(
                     exoPlayer.logCurrentTracks("after selectSubtitleTrack")
                 }
 
-                override fun setSubtitleUri(url: String) {
-                    Log.d(TAG, "setSubtitleUri: url=$url")
-                    subtitleSelectionJob?.cancel()
-                    subtitleSelectionJob = coroutineScope.launch {
-                        val currentPosition = exoPlayer.currentPosition
-                        val wasPlaying = exoPlayer.isPlaying
-                        val currentMediaItem = exoPlayer.currentMediaItem ?: run {
-                            Log.e(TAG, "setSubtitleUri: currentMediaItem is null, aborting")
-                            return@launch
-                        }
-                        preserveAudioSelectionForReload("setSubtitleUri")
-                        val resolvedMime = withContext(Dispatchers.IO) {
-                            resolveSubtitleMimeType(url)
-                        }
-                        selectedExternalSubtitleMimeType = resolvedMime
-                        Log.d(TAG, "setSubtitleUri: currentPosition=$currentPosition, wasPlaying=$wasPlaying")
-                        val subtitleConfig = MediaItem.SubtitleConfiguration.Builder(Uri.parse(url))
-                            .setMimeType(resolvedMime)
-                            .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
-                            .setRoleFlags(C.ROLE_FLAG_SUBTITLE)
-                            .build()
-                        Log.d(
-                            TAG,
-                            "setSubtitleUri: subtitleConfig built, uri=${subtitleConfig.uri}, mime=${subtitleConfig.mimeType}, selectionFlags=${subtitleConfig.selectionFlags}"
-                        )
-                        val newMediaItem = currentMediaItem.buildUpon()
-                            .setSubtitleConfigurations(listOf(subtitleConfig))
-                            .build()
-                        Log.d(TAG, "setSubtitleUri: newMediaItem subtitleConfigs count=${newMediaItem.localConfiguration?.subtitleConfigurations?.size}")
-                        exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
-                            .buildUpon()
-                            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-                            .clearOverridesOfType(C.TRACK_TYPE_TEXT)
-                            .setPreferredTextRoleFlags(C.ROLE_FLAG_SUBTITLE)
-                            .build()
-                        Log.d(TAG, "setSubtitleUri: track params set before prepare, textDisabled=${exoPlayer.trackSelectionParameters.disabledTrackTypes.contains(C.TRACK_TYPE_TEXT)}")
-                        exoPlayer.setPlaybackMediaItem(newMediaItem, currentPosition)
-                        exoPlayer.prepare()
-                        exoPlayer.playWhenReady = wasPlaying
-                        Log.d(TAG, "setSubtitleUri: prepare() called, waiting for STATE_READY")
+                override fun setExternalSubtitles(subtitles: List<ExternalSubtitleInput>) {
+                    // r15: record the candidate set. If they arrive BEFORE the initial prepare (the
+                    // common case — the prepare waits briefly for them), recomputing initialMediaItem
+                    // bundles them straight into the FIRST MediaItem, so the first switch / auto-apply
+                    // is pure track selection with ZERO re-prepare. If they somehow arrive after the
+                    // initial prepare, the fallback fold effect performs a single position-preserving
+                    // re-prepare. Either way every later switch is free track selection.
+                    if (subtitles.isNotEmpty()) {
+                        // Release the initial-prepare wait loop: candidates are now available to bundle.
+                        addonCandidatesDelivered = true
                     }
+                    if (addonSubtitleCandidates.map { it.url }.toSet() == subtitles.map { it.url }.toSet()) {
+                        return
+                    }
+                    addonSubtitleCandidates = subtitles
+                    Log.d(TAG, "setExternalSubtitles: ${subtitles.size} candidate(s) — bundling into initial media item (or folding if post-prepare)")
+                }
+
+                override fun setSubtitleUri(url: String, language: String, label: String) {
+                    Log.d(TAG, "setSubtitleUri: url=$url language=$language label=$label")
+                    selectedExternalSubtitleMimeType = guessSubtitleMime(url)
+                    // Fix 1: subtitle selection is ALWAYS pure TRACK SELECTION. The candidate tracks
+                    // were already merged into the media item by foldAddonSubtitleCandidates, so we
+                    // never build a new MediaItem or call prepare() here — no STATE_READY cycle, no
+                    // video restart, no decoder churn.
+                    exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
+                        .buildUpon()
+                        .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                        .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                        .build()
+                    if (exoPlayer.selectExternalSubtitleByUri(url)) {
+                        Log.d(TAG, "setSubtitleUri: applied via TRACK SELECTION (no prepare), url=$url")
+                        exoPlayer.logCurrentTracks("after setSubtitleUri (track-selection)")
+                        return
+                    }
+                    // The track isn't present yet (candidates not folded / not yet surfaced). Ensure
+                    // it's in the candidate set so the fold effect picks it up, then queue selection
+                    // for onTracksChanged. Still no manual prepare() here.
+                    Log.d(TAG, "setSubtitleUri: track not surfaced yet; ensuring candidate + queuing for onTracksChanged")
+                    if (addonSubtitleCandidates.none { it.url == url }) {
+                        // Fix 2: synthesize the candidate with the CLEAN language/label passed by the
+                        // caller (the chosen AddonSubtitle) so the folded track has a real language for
+                        // preferred-language matching and a human label — never the raw URL/".zip".
+                        addonSubtitleCandidates = addonSubtitleCandidates +
+                            ExternalSubtitleInput(
+                                url = url,
+                                language = language.cleanSubtitleLanguageOrNull() ?: "",
+                                label = cleanSubtitleLabel(rawLabel = label, language = language, url = url),
+                            )
+                    }
+                    // #87 / option #2: this is an EXPLICIT selection of a not-yet-bundled track, so
+                    // authorize the single position-preserving fold (the only re-prepare we allow,
+                    // and only here — never on mere fetch/arrival).
+                    foldRequested = true
+                    pendingExternalSubtitleUri.clear()
+                    pendingExternalSubtitleUri.add(url)
                 }
 
                 override fun clearExternalSubtitle() {
                     Log.d(TAG, "clearExternalSubtitle called")
                     subtitleSelectionJob?.cancel()
+                    pendingExternalSubtitleUri.clear()
                     selectedExternalSubtitleMimeType = null
-                    val currentPosition = exoPlayer.currentPosition
-                    val wasPlaying = exoPlayer.isPlaying
-                    val currentMediaItem = exoPlayer.currentMediaItem ?: return
-                    preserveAudioSelectionForReload("clearExternalSubtitle")
-                    val newMediaItem = currentMediaItem.buildUpon()
-                        .setSubtitleConfigurations(emptyList())
+                    // Fix 1: preloaded external subtitle tracks stay loaded — just DISABLE text via
+                    // track selection. No new MediaItem, no prepare(), no restart.
+                    exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
+                        .buildUpon()
+                        .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                        .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
                         .build()
-                    exoPlayer.setPlaybackMediaItem(newMediaItem, currentPosition)
-                    exoPlayer.prepare()
-                    exoPlayer.playWhenReady = wasPlaying
-                    Log.d(TAG, "clearExternalSubtitle: done, position=$currentPosition")
+                    Log.d(TAG, "clearExternalSubtitle: text disabled via track selection (no prepare)")
                 }
 
                 override fun clearExternalSubtitleAndSelect(trackIndex: Int) {
                     Log.d(TAG, "clearExternalSubtitleAndSelect: trackIndex=$trackIndex")
                     subtitleSelectionJob?.cancel()
+                    pendingExternalSubtitleUri.clear()
                     selectedExternalSubtitleMimeType = null
-                    pendingSubtitleTrackIndex.clear()
-                    pendingSubtitleTrackIndex.add(trackIndex)
-                    val currentPosition = exoPlayer.currentPosition
-                    val wasPlaying = exoPlayer.isPlaying
-                    val currentMediaItem = exoPlayer.currentMediaItem ?: return
-                    preserveAudioSelectionForReload("clearExternalSubtitleAndSelect")
-                    val newMediaItem = currentMediaItem.buildUpon()
-                        .setSubtitleConfigurations(emptyList())
-                        .build()
-                    exoPlayer.setPlaybackMediaItem(newMediaItem, currentPosition)
-                    exoPlayer.prepare()
-                    exoPlayer.playWhenReady = wasPlaying
-                    Log.d(TAG, "clearExternalSubtitleAndSelect: done, pending=$trackIndex position=$currentPosition")
+                    // Fix 1: switch from an external sub to a built-in/embedded text track purely via
+                    // track selection. The preloaded external configs remain available.
+                    if (trackIndex < 0) {
+                        exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
+                            .buildUpon()
+                            .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                            .build()
+                    } else {
+                        exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
+                            .buildUpon()
+                            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                            .build()
+                        exoPlayer.selectTrackByIndex(C.TRACK_TYPE_TEXT, trackIndex)
+                    }
+                    Log.d(TAG, "clearExternalSubtitleAndSelect: applied via track selection index=$trackIndex (no prepare)")
                 }
 
                 override fun applySubtitleStyle(style: SubtitleStyleState) {
@@ -1126,7 +1262,7 @@ private class NuvioLibmpvView(
                 }
             }
 
-            override fun setSubtitleUri(url: String) {
+            override fun setSubtitleUri(url: String, language: String, label: String) {
                 mpv.command("sub-add", url, "select")
             }
 
@@ -1480,6 +1616,149 @@ private fun ExoPlayer.extractAudioTracks(context: Context): List<AudioTrack> {
     return tracks
 }
 
+/**
+ * Fix 1/2: a stable subtitle-track id derived from the external subtitle URL. media3 surfaces this
+ * as `Format.id` for the sideloaded text track, letting us match-and-select an already-preloaded
+ * subtitle purely via track selection (no re-prepare / no video restart).
+ */
+internal fun externalSubtitleTrackId(url: String): String = "ext-sub:$url"
+
+/** Stable prefix for the id of a side-loaded external subtitle track (see [externalSubtitleTrackId]). */
+private const val EXTERNAL_SUBTITLE_TRACK_ID_PREFIX = "ext-sub:"
+
+/**
+ * r16: true when a text track's Format.id identifies a side-loaded external/catalog subtitle (as
+ * opposed to a muxed/embedded track). ExoPlayer rewrites the SubtitleConfiguration id to
+ * "<sourceIndex>:ext-sub:<url>" when merging via MergingMediaSource, so match both the raw prefix and
+ * the index-prefixed form. Used to keep these out of the "Built-in" tab (they live in "Addons").
+ */
+internal fun String.isExternalSubtitleTrackId(): Boolean =
+    startsWith(EXTERNAL_SUBTITLE_TRACK_ID_PREFIX) || contains(":$EXTERNAL_SUBTITLE_TRACK_ID_PREFIX")
+
+/**
+ * Build a [MediaItem.SubtitleConfiguration] for a preloaded external subtitle. Sets a stable id and
+ * a clean label so the picker never shows the raw ".zip" URL filename (Fix 3) and selection can
+ * match by id (Fix 1).
+ */
+@androidx.annotation.OptIn(UnstableApi::class)
+private fun ExternalSubtitleInput.toSubtitleConfiguration(): MediaItem.SubtitleConfiguration {
+    val mimeType = resolveSubtitleMimeType(url)
+    val language = language.cleanSubtitleLanguageOrNull()
+    return MediaItem.SubtitleConfiguration.Builder(Uri.parse(url))
+        .setId(externalSubtitleTrackId(url))
+        .setMimeType(mimeType)
+        .apply { language?.let { setLanguage(it) } }
+        .setLabel(cleanSubtitleLabel(rawLabel = label, language = language, url = url))
+        .setRoleFlags(C.ROLE_FLAG_SUBTITLE)
+        .build()
+}
+
+/**
+ * Fix 1/2/3: build subtitle configurations for EVERY known external subtitle — the stream-attached
+ * ones plus the prewarmed addon candidates — so they can all be bundled into the media item at
+ * build time (single prepare) with clean human labels and stable ids (for track-selection switching
+ * that never re-prepares). De-duplicated by url; the addon candidate (which carries a clean display
+ * label + language) wins over a bare stream subtitle for the same url.
+ */
+@androidx.annotation.OptIn(UnstableApi::class)
+private fun buildExternalSubtitleConfigurations(
+    streamSubtitles: List<com.nuvio.app.features.streams.StreamSubtitle>,
+    addonCandidates: List<ExternalSubtitleInput>,
+): List<MediaItem.SubtitleConfiguration> {
+    val configs = LinkedHashMap<String, MediaItem.SubtitleConfiguration>()
+    streamSubtitles.forEach { subtitle ->
+        val mimeType = resolveSubtitleMimeType(subtitle.url, subtitle.headers)
+        val language = subtitle.language.cleanSubtitleLanguageOrNull()
+        configs[subtitle.url] = MediaItem.SubtitleConfiguration.Builder(Uri.parse(subtitle.url))
+            .setId(externalSubtitleTrackId(subtitle.url))
+            .setMimeType(mimeType)
+            .apply { language?.let { setLanguage(it) } }
+            .setLabel(cleanSubtitleLabel(rawLabel = subtitle.name, language = language, url = subtitle.url))
+            .setRoleFlags(C.ROLE_FLAG_SUBTITLE)
+            .build()
+    }
+    addonCandidates.forEach { candidate ->
+        configs[candidate.url] = candidate.toSubtitleConfiguration()
+    }
+    return configs.values.toList()
+}
+
+/**
+ * Fix 2/3: never let a raw URL / ".zip" filename masquerade as a language. Returns null when the
+ * candidate clearly is a URL/path/archive so callers don't tag the track with garbage that would
+ * also break preferred-language auto-select.
+ */
+private fun String?.cleanSubtitleLanguageOrNull(): String? {
+    val value = this?.trim()?.takeIf { it.isNotBlank() } ?: return null
+    val looksLikeUrlOrFile = value.contains("://") ||
+        value.contains('/') ||
+        value.endsWith(".zip", ignoreCase = true) ||
+        value.endsWith(".srt", ignoreCase = true) ||
+        value.endsWith(".vtt", ignoreCase = true) ||
+        value.endsWith(".ass", ignoreCase = true) ||
+        value.endsWith(".ssa", ignoreCase = true)
+    return if (looksLikeUrlOrFile) null else value
+}
+
+/**
+ * Fix 3: derive a clean, human subtitle track label. Prefers an explicit non-URL label, then the
+ * language's display name, finally a generic "Subtitle" — but NEVER the raw download URL / ".zip"
+ * filename that the backend's download-proxy URL would otherwise leak into the picker.
+ */
+private fun cleanSubtitleLabel(rawLabel: String?, language: String?, url: String): String {
+    rawLabel?.cleanSubtitleLanguageOrNull()?.let { return it }
+    language?.let { code ->
+        subtitleLanguageDisplayName(code)?.let { return it }
+        return code
+    }
+    return "Subtitle"
+}
+
+/** Minimal ISO-639 → display-name map covering the prewarmed languages (en/sv/fi) and common ones. */
+private fun subtitleLanguageDisplayName(code: String): String? {
+    val normalized = code.trim().lowercase().substringBefore('-').substringBefore('_')
+    return when (normalized) {
+        "en", "eng", "english" -> "English"
+        "sv", "swe", "swedish" -> "Svenska"
+        "fi", "fin", "finnish" -> "Suomi"
+        "es", "spa", "spanish" -> "Español"
+        "fr", "fre", "fra", "french" -> "Français"
+        "de", "ger", "deu", "german" -> "Deutsch"
+        "it", "ita", "italian" -> "Italiano"
+        "pt", "por", "portuguese" -> "Português"
+        "nl", "dut", "nld", "dutch" -> "Nederlands"
+        "da", "dan", "danish" -> "Dansk"
+        "no", "nor", "norwegian" -> "Norsk"
+        "ru", "rus", "russian" -> "Русский"
+        "ar", "ara", "arabic" -> "العربية"
+        "zh", "chi", "zho", "chinese" -> "中文"
+        "ja", "jpn", "japanese" -> "日本語"
+        "ko", "kor", "korean" -> "한국어"
+        "hi", "hin", "hindi" -> "हिन्दी"
+        "pl", "pol", "polish" -> "Polski"
+        "tr", "tur", "turkish" -> "Türkçe"
+        else -> null
+    }
+}
+
+/**
+ * Select an already-preloaded external subtitle track by its URL via TRACK SELECTION only.
+ * Returns true if a matching loaded text track was found and selected (no prepare()); false if the
+ * track isn't present yet (caller should fall back to the rebuild+prepare path).
+ */
+@androidx.annotation.OptIn(UnstableApi::class)
+private fun ExoPlayer.selectExternalSubtitleByUri(url: String): Boolean {
+    val targetId = externalSubtitleTrackId(url)
+    return selectTrackByPredicate(C.TRACK_TYPE_TEXT, "extUri=$url") { _, format ->
+        // ExoPlayer rewrites a side-loaded SubtitleConfiguration's id to "<sourceIndex>:<originalId>"
+        // when it merges the external subtitle into the MergingMediaSource (observed as
+        // "1:ext-sub:<url>"). Match the original id OR that index-prefixed form — exact equality
+        // alone never matched, which is why selection always fell through to the fold/re-prepare path.
+        val fid = format.id
+        fid == targetId || fid?.endsWith(":$targetId") == true
+    }
+}
+
 private fun ExoPlayer.extractSubtitleTracks(context: Context): List<SubtitleTrack> {
     val tracks = mutableListOf<SubtitleTrack>()
     val trackNameProvider = CustomDefaultTrackNameProvider(context.resources)
@@ -1487,12 +1766,28 @@ private fun ExoPlayer.extractSubtitleTracks(context: Context): List<SubtitleTrac
     for (group in currentTracks.groups) {
         if (group.type != C.TRACK_TYPE_TEXT) continue
         val format = group.mediaTrackGroup.getFormat(0)
+        // r16: side-loaded external / catalog (HamroCinema) subtitles are bundled into the MediaItem
+        // as SubtitleConfigurations and surface here as text tracks indistinguishable from muxed ones,
+        // which made them leak into the "Built-in" tab. They already have their own "Addons" tab entry
+        // (addonSubtitles), so EXCLUDE them from the Built-in list. The Built-in list must contain ONLY
+        // tracks muxed into the video. External subs carry the stable id "ext-sub:<url>" (ExoPlayer may
+        // index-prefix it to "<n>:ext-sub:<url>" when merged) — match either form.
+        if (format.id?.isExternalSubtitleTrackId() == true) {
+            continue
+        }
         val hasForcedSelectionFlag = (format.selectionFlags and C.SELECTION_FLAG_FORCED) != 0
+        // Fix 3: prefer the clean label we attached to the SubtitleConfiguration. Fall back to the
+        // track-name provider, but if that still produced a URL/".zip" (e.g. an embedded track with
+        // a filename name), derive a clean language name so the picker never shows the raw URL.
+        val providerLabel = trackNameProvider.getTrackName(format)
+        val cleanLabel = format.label?.cleanSubtitleLanguageOrNull()
+            ?: providerLabel.cleanSubtitleLanguageOrNull()
+            ?: cleanSubtitleLabel(rawLabel = null, language = format.language, url = format.id ?: "")
         tracks.add(
             SubtitleTrack(
                 index = idx,
                 id = format.id ?: idx.toString(),
-                label = trackNameProvider.getTrackName(format),
+                label = cleanLabel,
                 language = format.language,
                 isSelected = group.isSelected,
                 isForced = inferForcedSubtitleTrack(
@@ -1740,7 +2035,11 @@ private fun guessSubtitleMime(url: String): String {
         lower.contains(".vtt") || lower.contains(".webvtt") -> MimeTypes.TEXT_VTT
         lower.contains(".ass") || lower.contains(".ssa") -> MimeTypes.TEXT_SSA
         lower.contains(".ttml") || lower.contains(".dfxp") || lower.contains(".xml") -> MimeTypes.APPLICATION_TTML
-        else -> MimeTypes.TEXT_VTT
+        // Our backend's subtitle download-proxy serves SRT via an extension-less URL
+        // (/catalog-addon/subtitles/download?u=...). Defaulting to WebVTT made ExoPlayer's
+        // WebvttParser throw "Expected WEBVTT" on SRT bodies, disabling the track / breaking
+        // playback. SRT is the de-facto default our backend serves, so fall back to it.
+        else -> MimeTypes.APPLICATION_SUBRIP
     }
 }
 

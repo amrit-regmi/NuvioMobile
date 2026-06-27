@@ -89,6 +89,8 @@ import com.nuvio.app.core.network.SyncBackendRepository
 import com.nuvio.app.core.sync.AppForegroundMonitor
 import com.nuvio.app.core.sync.ProfileSettingsSync
 import com.nuvio.app.core.sync.SyncManager
+import com.nuvio.app.core.ui.CineXLoader
+import com.nuvio.app.core.ui.CineXSplash
 import com.nuvio.app.core.ui.NuvioNavigationBar
 import com.nuvio.app.core.ui.NuvioContinueWatchingActionSheet
 import com.nuvio.app.core.ui.NuvioPosterActionSheet
@@ -188,6 +190,10 @@ import com.nuvio.app.features.collection.FolderDetailRepository
 import com.nuvio.app.features.streams.StreamAutoPlayPolicy
 import com.nuvio.app.features.streams.BingeGroupCacheRepository
 import com.nuvio.app.features.streams.StreamBehaviorHints
+import com.nuvio.app.features.streams.CatalogPrewarmService
+import com.nuvio.app.features.streams.ResolvedStreamCache
+import com.nuvio.app.features.streams.StreamWarmer
+import com.nuvio.app.features.streams.resolvedStreamCacheKey
 import com.nuvio.app.features.streams.StreamItem
 import com.nuvio.app.features.streams.StreamLaunch
 import com.nuvio.app.features.streams.StreamLaunchStore
@@ -196,6 +202,7 @@ import com.nuvio.app.features.streams.StreamsRepository
 import com.nuvio.app.features.streams.StreamsScreen
 import com.nuvio.app.features.tmdb.TmdbService
 import com.nuvio.app.features.player.PlayerSettingsRepository
+import com.nuvio.app.features.player.SubtitleRepository
 import com.nuvio.app.features.trakt.TraktAuthRepository
 import com.nuvio.app.features.trakt.TraktListTab
 import com.nuvio.app.features.trakt.TraktScrobbleRepository
@@ -215,6 +222,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import nuvio.composeapp.generated.resources.*
 import nuvio.composeapp.generated.resources.app_logo_wordmark
@@ -405,6 +413,21 @@ private suspend fun refreshSyncBackendSelection() {
     }
 }
 
+/**
+ * Fix 1: upper bound for resolving a cached (Tier-2 clientResolve) debrid stream to a
+ * playable url. If the resolve exceeds this (or is cancelled), the loading overlay flag
+ * is reset (try/finally) and the user is shown an error instead of an infinite spinner.
+ */
+private const val DEBRID_RESOLVE_TIMEOUT_MS = 45_000L
+
+/**
+ * Hard ceiling for a resolve that ATTACHES to an in-flight StreamWarmer warm. A live warm can
+ * legitimately exceed the 45s fresh-resolve cap, but it must never let the UI spin forever (the
+ * r8 "no cap when attached" change caused a silent ~10 min hang). This is generous but finite so
+ * a wedged warm still fails with the standard toast instead of an infinite spinner.
+ */
+private const val DEBRID_RESOLVE_WARM_CEILING_MS = 90_000L
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 @Preview
@@ -471,6 +494,14 @@ fun App() {
         }
 
         var gateScreen by rememberSaveable { mutableStateOf(AppGateScreen.Loading.name) }
+        // Cold-start CineX intro splash: guarantee the full fly-in → equaliser → wordmark animation
+        // (~2s) plays through before we ever leave the Loading gate, so it's never cut short by a
+        // fast auth resolve. rememberSaveable so a config change doesn't replay it.
+        var splashMinDone by rememberSaveable { mutableStateOf(false) }
+        LaunchedEffect(Unit) {
+            kotlinx.coroutines.delay(2300)
+            splashMinDone = true
+        }
         var editingProfile by remember { mutableStateOf<NuvioProfile?>(null) }
         var isNewProfile by remember { mutableStateOf(false) }
         var autoSkipProfileSelection by rememberSaveable { mutableStateOf(false) }
@@ -524,7 +555,7 @@ fun App() {
             }
         }
 
-        LaunchedEffect(authState, networkStatusUiState.condition, profileState.profiles) {
+        LaunchedEffect(authState, networkStatusUiState.condition, profileState.profiles, splashMinDone) {
             val cachedProfiles = profileState.profiles
             val hasCachedProfileAccess =
                 cachedProfiles.isNotEmpty() &&
@@ -536,6 +567,10 @@ fun App() {
             val allowCachedProfileAccess =
                 hasCachedProfileAccess &&
                     networkStatusUiState.condition != NetworkCondition.Online
+
+            // While the cold-start intro splash is still playing, stay on Loading — never transition
+            // off it (to Auth / ProfileSelection / Main) until the animation has finished.
+            if (gateScreen == AppGateScreen.Loading.name && !splashMinDone) return@LaunchedEffect
 
             when (authState) {
                 is AuthState.Loading -> {
@@ -612,14 +647,7 @@ fun App() {
         ) { currentGate ->
             when (currentGate) {
                 AppGateScreen.Loading.name -> {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(MaterialTheme.nuvio.colors.background),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        CircularProgressIndicator(color = MaterialTheme.nuvio.colors.accent)
-                    }
+                    CineXSplash(modifier = Modifier.fillMaxSize())
                 }
                 AppGateScreen.Auth.name -> {
                     AuthScreen(modifier = Modifier.fillMaxSize())
@@ -1799,7 +1827,24 @@ private fun MainAppContent(
                     }
                     val pauseDescription = launch.pauseDescription
                     val streamRouteScope = rememberCoroutineScope()
-                    var resolvingDebridStream by rememberSaveable(route.launchId) { mutableStateOf(false) }
+                    // Fix 1: plain `remember` (NOT rememberSaveable) so a stale `true`
+                    // can never be restored across a config change and permanently block
+                    // retries via the re-entrancy guard in openSelectedStream.
+                    var resolvingDebridStream by remember(route.launchId) { mutableStateOf(false) }
+                    // Fix 1 (belt-and-suspenders): if a stale `true` is ever observed on
+                    // (re)composition, clear it so the re-entrancy guard can't permanently
+                    // block playback retries.
+                    LaunchedEffect(Unit) {
+                        if (resolvingDebridStream) resolvingDebridStream = false
+                    }
+                    // True while the play path is AWAITING a StreamWarmer resolve that's already in
+                    // flight (a genuinely-progressing cold TorBox resolve). When set, the overlay
+                    // shows "Preparing stream…" and we let the resolve run past the normal play
+                    // timeout — failing a resolve that's actively making progress would be wrong.
+                    var preparingStreamFromWarm by remember(route.launchId) { mutableStateOf(false) }
+                    LaunchedEffect(Unit) {
+                        if (preparingStreamFromWarm) preparingStreamFromWarm = false
+                    }
                     var pendingP2pStreamOpen by remember { mutableStateOf<PendingP2pStreamOpen?>(null) }
                     val lifecycleOwner = backStackEntry
                     DisposableEffect(lifecycleOwner, route.launchId) {
@@ -1864,6 +1909,54 @@ private fun MainAppContent(
 
                         effectiveVideoId = resolvedVideoId ?: launch.videoId
                         hasResolvedVideoId = true
+                    }
+
+                    // Fix #1 — warm the EXACT play target on EVERY direct-to-stream entry,
+                    // including Continue-Watching (which calls launchPlaybackWithDownloadPreference
+                    // → StreamRoute and bypasses MetaDetailsScreen entirely, so the details-open
+                    // warm never ran for it). This guarantees the stream the user is about to press
+                    // Play on gets its top Tier-2 (TorBox-cached) candidate pre-resolved to a direct
+                    // CDN url (ResolvedStreamCache) and its en/sv/fi subtitles bootstrapped (backend
+                    // prewarm) before the resolve/auto-play happens — no cold TorBox round-trip, no
+                    // "fetch subtitle" tap. Deduped + cancellation-safe + best-effort.
+                    LaunchedEffect(
+                        hasResolvedVideoId,
+                        effectiveVideoId,
+                        launch.type,
+                        launch.parentMetaId,
+                        launch.seasonNumber,
+                        launch.episodeNumber,
+                    ) {
+                        if (!hasResolvedVideoId) return@LaunchedEffect
+                        val isSeries = launch.type.lowercase() in setOf("series", "show", "tv", "tvshow")
+                        if (isSeries) {
+                            val metaId = launch.parentMetaId ?: effectiveVideoId
+                            val season = launch.seasonNumber
+                            val episode = launch.episodeNumber
+                            if (metaId.isNotBlank() && season != null && episode != null) {
+                                CatalogPrewarmService.prewarm("series", "$metaId:$season:$episode")
+                                StreamWarmer.warm(
+                                    type = "series",
+                                    videoId = metaId,
+                                    season = season,
+                                    episode = episode,
+                                )
+                                // r15: prefetch the addon subtitle CANDIDATE list on this universal
+                                // play path (incl. Continue-Watching, which bypasses details-open) so
+                                // the candidates are delivered to the player BEFORE its initial
+                                // prepare — letting them ride the initial MediaItem so the FIRST
+                                // subtitle switch is pure track selection, no re-prepare/restart.
+                                SubtitleRepository.prewarmAddonSubtitles(
+                                    "series",
+                                    "$metaId:$season:$episode",
+                                )
+                            }
+                        } else if (effectiveVideoId.isNotBlank()) {
+                            CatalogPrewarmService.prewarm("movie", effectiveVideoId)
+                            StreamWarmer.warm(type = "movie", videoId = effectiveVideoId)
+                            // r15: prefetch addon subtitles for the movie (see series note above).
+                            SubtitleRepository.prewarmAddonSubtitles("movie", effectiveVideoId)
+                        }
                     }
 
                     val playerSettings by remember {
@@ -2094,20 +2187,41 @@ private fun MainAppContent(
                         if (streamsUiState.requestToken != expectedStreamsRequestToken) return@LaunchedEffect
                         val selectedStream = streamsUiState.autoPlayStream ?: return@LaunchedEffect
                         val stream = if (DirectDebridPlaybackResolver.shouldResolveToPlayableStream(selectedStream)) {
-                            when (
-                                val resolved = DirectDebridPlaybackResolver.resolveToPlayableStream(
-                                    stream = selectedStream,
-                                    season = launch.seasonNumber,
-                                    episode = launch.episodeNumber,
-                                )
-                            ) {
-                                is DirectDebridPlayableResult.Success -> resolved.stream
-                                else -> {
-                                    val hasNextCandidate = StreamsRepository.skipAutoPlayStream(selectedStream)
+                            // Fix #2 — key parity: the default (auto) Play must resolve the SAME
+                            // stream the StreamWarmer warmed and use its cached CDN url. Compute the
+                            // resolvedStreamCacheKey (provider|infoHash|fileIdx|filename|season|episode)
+                            // — the EXACT key warm cached under — then (a) serve the cached url if the
+                            // warm already resolved it, or (b) AWAIT the warm's in-flight resolve via
+                            // resolveSingleFlight instead of launching a second, independent (possibly
+                            // cold) TorBox round-trip. For a TorBox-cached source this resolves via the
+                            // cache/cached path and never starts a non-cached download.
+                            val cacheKey = selectedStream.resolvedStreamCacheKey(
+                                season = launch.seasonNumber,
+                                episode = launch.episodeNumber,
+                            )
+                            val cachedUrl = ResolvedStreamCache.get(cacheKey)
+                            if (cachedUrl != null) {
+                                selectedStream.copy(url = cachedUrl, externalUrl = null)
+                            } else {
+                                val sharedUrl = ResolvedStreamCache.resolveSingleFlight(cacheKey) {
+                                    val r = DirectDebridPlaybackResolver.resolveToPlayableStream(
+                                        stream = selectedStream,
+                                        season = launch.seasonNumber,
+                                        episode = launch.episodeNumber,
+                                    )
+                                    (r as? DirectDebridPlayableResult.Success)?.stream?.playableDirectUrl
+                                }
+                                if (sharedUrl != null) {
+                                    selectedStream.copy(url = sharedUrl, externalUrl = null)
+                                } else {
+                                    // resolveSingleFlight already drove (or awaited) the resolve and it
+                                    // failed/timed out — do NOT resolve a third time. Skip to the next
+                                    // candidate; if none, surface the failure and reload the list so we
+                                    // never serve a dead link.
+                                    val hasNextCandidate =
+                                        StreamsRepository.skipAutoPlayStream(selectedStream)
                                     if (!hasNextCandidate) {
-                                        resolved.toastMessage()?.let { NuvioToastController.show(it) }
-                                    }
-                                    if (!hasNextCandidate && resolved == DirectDebridPlayableResult.Stale) {
+                                        NuvioToastController.show(getString(Res.string.debrid_resolve_failed))
                                         StreamsRepository.reload(
                                             type = launch.type,
                                             videoId = effectiveVideoId,
@@ -2211,7 +2325,7 @@ private fun MainAppContent(
                             modifier = Modifier.fillMaxSize(),
                             contentAlignment = Alignment.Center,
                         ) {
-                            CircularProgressIndicator(color = MaterialTheme.nuvio.colors.accent)
+                            CineXLoader()
                         }
                         return@composable
                     }
@@ -2223,37 +2337,92 @@ private fun MainAppContent(
                         forceExternal: Boolean,
                         forceInternal: Boolean,
                     ) {
+                        // Fast path: if StreamWarmer already pre-resolved this stream to a direct
+                        // CDN url during details-open, play it INSTANTLY and skip the TorBox
+                        // round-trip entirely (this is the slow/timeout path on mobile).
+                        if (stream.playableDirectUrl == null &&
+                            DirectDebridPlaybackResolver.shouldResolveToPlayableStream(stream)
+                        ) {
+                            val cachedUrl = ResolvedStreamCache.get(
+                                stream = stream,
+                                season = launch.seasonNumber,
+                                episode = launch.episodeNumber,
+                            )
+                            if (cachedUrl != null) {
+                                openSelectedStream(
+                                    stream = stream.copy(url = cachedUrl, externalUrl = null),
+                                    resolvedResumePositionMs = resolvedResumePositionMs,
+                                    resolvedResumeProgressFraction = resolvedResumeProgressFraction,
+                                    forceExternal = forceExternal,
+                                    forceInternal = forceInternal,
+                                )
+                                return
+                            }
+                        }
                         if (DirectDebridPlaybackResolver.shouldResolveToPlayableStream(stream)) {
                             if (resolvingDebridStream) return
+                            val resolvedCacheKey = stream.resolvedStreamCacheKey(
+                                season = launch.seasonNumber,
+                                episode = launch.episodeNumber,
+                            )
+                            // Single-flight: if the StreamWarmer is already resolving this exact
+                            // stream (the cold-TorBox case), AWAIT that resolve instead of starting
+                            // a second one. A genuinely-progressing warm can legitimately exceed the
+                            // 45s play timeout, so when we attach to it we use a more GENEROUS cap
+                            // (90s) and show a "Preparing stream…" state rather than failing a live
+                            // resolve — but never an unbounded wait.
+                            val awaitingWarm = ResolvedStreamCache.isResolving(resolvedCacheKey)
                             streamRouteScope.launch {
                                 resolvingDebridStream = true
-                                val resolved = DirectDebridPlaybackResolver.resolveToPlayableStream(
-                                    stream = stream,
-                                    season = launch.seasonNumber,
-                                    episode = launch.episodeNumber,
-                                )
-                                resolvingDebridStream = false
-                                when (resolved) {
-                                    is DirectDebridPlayableResult.Success -> openSelectedStream(
-                                        stream = resolved.stream,
+                                preparingStreamFromWarm = awaitingWarm
+                                // Fix 1: ALWAYS reset the overlay flags (try/finally) even on
+                                // cancellation (rotation/backgrounding) or exception, and bound the
+                                // resolve with a timeout so it can never spin forever. A FRESH
+                                // resolve uses the 45s cap; attaching to an in-flight warm uses the
+                                // more generous 90s ceiling — but NEVER an unbounded wait (the r8
+                                // no-cap path caused a silent ~10 min hang).
+                                val resolveCeilingMs = if (awaitingWarm) {
+                                    DEBRID_RESOLVE_WARM_CEILING_MS
+                                } else {
+                                    DEBRID_RESOLVE_TIMEOUT_MS
+                                }
+                                val resolved = try {
+                                    val sharedUrl = ResolvedStreamCache.resolveSingleFlight(resolvedCacheKey) {
+                                        val r = withTimeoutOrNull(resolveCeilingMs) {
+                                            DirectDebridPlaybackResolver.resolveToPlayableStream(
+                                                stream = stream,
+                                                season = launch.seasonNumber,
+                                                episode = launch.episodeNumber,
+                                            )
+                                        }
+                                        (r as? DirectDebridPlayableResult.Success)?.stream?.playableDirectUrl
+                                    }
+                                    sharedUrl
+                                } finally {
+                                    resolvingDebridStream = false
+                                    preparingStreamFromWarm = false
+                                }
+                                if (resolved != null) {
+                                    openSelectedStream(
+                                        stream = stream.copy(url = resolved, externalUrl = null),
                                         resolvedResumePositionMs = resolvedResumePositionMs,
                                         resolvedResumeProgressFraction = resolvedResumeProgressFraction,
                                         forceExternal = forceExternal,
                                         forceInternal = forceInternal,
                                     )
-                                    else -> {
-                                        resolved.toastMessage()?.let { NuvioToastController.show(it) }
-                                        if (resolved == DirectDebridPlayableResult.Stale) {
-                                            StreamsRepository.reload(
-                                                type = launch.type,
-                                                videoId = effectiveVideoId,
-                                                parentMetaId = launch.parentMetaId,
-                                                season = launch.seasonNumber,
-                                                episode = launch.episodeNumber,
-                                                manualSelection = launch.manualSelection,
-                                            )
-                                        }
-                                    }
+                                } else {
+                                    // Resolve failed/timed out — surface an error instead of
+                                    // silently spinning/dismissing, and refresh the stream list in
+                                    // case the link went stale.
+                                    NuvioToastController.show(getString(Res.string.debrid_resolve_failed))
+                                    StreamsRepository.reload(
+                                        type = launch.type,
+                                        videoId = effectiveVideoId,
+                                        parentMetaId = launch.parentMetaId,
+                                        season = launch.seasonNumber,
+                                        episode = launch.episodeNumber,
+                                        manualSelection = launch.manualSelection,
+                                    )
                                 }
                             }
                             return
@@ -2417,7 +2586,13 @@ private fun MainAppContent(
                                 ) {
                                     CircularProgressIndicator(color = MaterialTheme.nuvio.colors.playerControlsForeground)
                                     Text(
-                                        text = stringResource(Res.string.streams_finding_source),
+                                        text = stringResource(
+                                            if (preparingStreamFromWarm) {
+                                                Res.string.debrid_preparing_stream
+                                            } else {
+                                                Res.string.streams_finding_source
+                                            }
+                                        ),
                                         color = MaterialTheme.nuvio.colors.playerControlsForeground.copy(alpha = MaterialTheme.nuvio.opacity.overlayHeavy),
                                         style = MaterialTheme.typography.bodyMedium,
                                     )
@@ -2911,7 +3086,11 @@ private fun MainAppContent(
 
             androidx.compose.animation.AnimatedVisibility(
                 visible = !initialHomeReady || profileSwitchLoading,
-                enter = fadeIn(),
+                // Delay the fade-in past the gate's cold-start crossfade (≈400ms) so the home-load
+                // loader never overlaps the outgoing intro splash — that overlap showed the lens
+                // mark twice. If home is already ready by then (it preloads during the splash) the
+                // overlay is skipped entirely → clean splash → app handoff.
+                enter = fadeIn(androidx.compose.animation.core.tween(durationMillis = 200, delayMillis = 450)),
                 exit = fadeOut(androidx.compose.animation.core.tween(400)),
             ) {
                 AppLaunchOverlay(modifier = Modifier.fillMaxSize())
@@ -3240,26 +3419,14 @@ private fun TabletTopPillItem(
 private fun AppLaunchOverlay(
     modifier: Modifier = Modifier,
 ) {
-    val tokens = MaterialTheme.nuvio
+    // Post-login / profile-switch loader: just the animated CineX mark (equaliser) on the app
+    // background — NOT the full intro splash. The intro splash is reserved for cold start only.
     Box(
         modifier = modifier
-            .background(tokens.colors.background)
-            .zIndex(NuvioTokens.Z.dialog),
+            .zIndex(NuvioTokens.Z.dialog)
+            .background(Color(0xFF0D0D0D)),
         contentAlignment = Alignment.Center,
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Image(
-                painter = painterResource(Res.drawable.app_logo_wordmark),
-                contentDescription = stringResource(Res.string.app_brand_name),
-                modifier = Modifier
-                    .fillMaxWidth(0.48f)
-                    .height(44.dp),
-                contentScale = ContentScale.Fit,
-            )
-            Spacer(modifier = Modifier.height(tokens.spacing.sectionGap))
-            CircularProgressIndicator(color = tokens.colors.accent)
-        }
+        CineXLoader(size = 96.dp)
     }
 }

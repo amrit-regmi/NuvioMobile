@@ -1,5 +1,6 @@
 package com.nuvio.app.features.home
 
+import co.touchlab.kermit.Logger
 import com.nuvio.app.features.addons.ManagedAddon
 import com.nuvio.app.features.addons.AddonRepository
 import com.nuvio.app.features.addons.enabledAddons
@@ -29,6 +30,7 @@ import kotlin.random.Random
 
 object HomeRepository {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val log = Logger.withTag("HomeRepository")
     private val _uiState = MutableStateFlow(HomeUiState())
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
 
@@ -161,6 +163,7 @@ object HomeRepository {
      */
     fun refreshRecommendations(force: Boolean = false) {
         val recommendationsEnabled = HomeCatalogSettingsRepository.snapshot().useRecommendations
+        log.i { "refreshRecommendations: force=$force enabled=$recommendationsEnabled recoJobActive=${recoJob?.isActive}" }
         if (!recommendationsEnabled) {
             if (recoDefinitions.isNotEmpty() || cachedRecoSections.isNotEmpty()) {
                 recoJob?.cancel()
