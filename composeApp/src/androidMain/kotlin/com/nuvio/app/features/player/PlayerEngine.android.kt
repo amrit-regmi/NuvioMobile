@@ -959,6 +959,12 @@ private fun LibmpvPlayerSurface(
             }
             override fun event(eventId: Int, data: MPVNode) {
                 when (eventId) {
+                    MPV.mpvEvent.MPV_EVENT_START_FILE -> {
+                        coroutineScope.launch(Dispatchers.Main.immediate) {
+                            latestOnError.value(null)
+                            latestOnSnapshot.value(PlayerPlaybackSnapshot())
+                        }
+                    }
                     MPV.mpvEvent.MPV_EVENT_FILE_LOADED,
                     MPV.mpvEvent.MPV_EVENT_PLAYBACK_RESTART -> {
                         coroutineScope.launch(Dispatchers.Main.immediate) {
@@ -989,6 +995,7 @@ private fun LibmpvPlayerSurface(
 
     LaunchedEffect(playerViewRef, sourceUrl, sourceAudioUrl, sanitizedSourceHeaders, externalSubtitles) {
         val view = playerViewRef ?: return@LaunchedEffect
+        latestOnSnapshot.value(PlayerPlaybackSnapshot())
         view.loadSource(
             sourceUrl = sourceUrl,
             sourceAudioUrl = sourceAudioUrl,
@@ -996,7 +1003,6 @@ private fun LibmpvPlayerSurface(
             externalSubtitles = externalSubtitles,
             playWhenReady = latestPlayWhenReady.value,
         )
-        latestOnSnapshot.value(view.snapshot())
     }
 
     LaunchedEffect(playerViewRef, playWhenReady) {
@@ -1010,7 +1016,7 @@ private fun LibmpvPlayerSurface(
         playerViewRef?.applyResizeMode(resizeMode)
     }
 
-    LaunchedEffect(playerViewRef) {
+    LaunchedEffect(playerViewRef, sourceUrl, sourceAudioUrl, sanitizedSourceHeaders, externalSubtitles) {
         val view = playerViewRef ?: return@LaunchedEffect
         onControllerReady(view.controller(context))
     }
@@ -1128,18 +1134,27 @@ private class NuvioLibmpvView(
         currentSourceAudioUrl = sourceAudioUrl
         currentRequestHeaders = requestHeaders
         currentExternalSubtitles = externalSubtitles
-        applyRequestHeaders(requestHeaders)
-        setPaused(!playWhenReady)
         if (!sameSource) {
-            playFile(sourceUrl)
-            if (!sourceAudioUrl.isNullOrBlank()) {
-                mpv.command("audio-add", sourceAudioUrl, "auto")
-            }
-            externalSubtitles.forEachIndexed { index, subtitle ->
-                val flag = if (index == 0) "auto" else "cached"
-                mpv.command("sub-add", subtitle.url, flag)
-            }
+            loadCurrentSource(playWhenReady = playWhenReady)
+        } else {
+            applyRequestHeaders(requestHeaders)
+            setPaused(!playWhenReady)
         }
+    }
+
+    private fun loadCurrentSource(playWhenReady: Boolean) {
+        val sourceUrl = currentSourceUrl ?: return
+        applyRequestHeaders(currentRequestHeaders)
+        setPaused(!playWhenReady)
+        mpv.command("loadfile", sourceUrl, "replace")
+        currentSourceAudioUrl?.takeIf { it.isNotBlank() }?.let { sourceAudioUrl ->
+            mpv.command("audio-add", sourceAudioUrl, "auto")
+        }
+        currentExternalSubtitles.forEachIndexed { index, subtitle ->
+            val flag = if (index == 0) "auto" else "cached"
+            mpv.command("sub-add", subtitle.url, flag)
+        }
+        setPaused(!playWhenReady)
     }
 
     fun setPaused(paused: Boolean) {
@@ -1207,8 +1222,7 @@ private class NuvioLibmpvView(
             }
 
             override fun retry() {
-                currentSourceUrl?.let { playFile(it) }
-                setPaused(false)
+                loadCurrentSource(playWhenReady = true)
             }
 
             override fun setPlaybackSpeed(speed: Float) {
@@ -1275,7 +1289,7 @@ private class NuvioLibmpvView(
             }
 
             override fun applySubtitleStyle(style: SubtitleStyleState) {
-                mpv.setPropertyString("sub-ass-override", "force")
+                mpv.setPropertyString("sub-ass-override", "no")
                 mpv.setPropertyString("sub-color", style.textColor.toMpvColor())
                 mpv.setPropertyString("sub-back-color", style.backgroundColor.toMpvColor())
                 mpv.setPropertyString("sub-outline-color", style.outlineColor.toMpvColor())
