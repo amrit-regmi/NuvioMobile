@@ -1950,4 +1950,15 @@
     <string name="settings_rating_action_rate">Rate</string>
     <string name="settings_rating_dialog_title">Rate this title</string>
     <string name="settings_rating_clear">Clear rating</string>
+    <string name="settings_rating_submit">Submit</string>
+    <string name="settings_rating_saved">Rating saved</string>
+    <string name="settings_rating_save_failed">Couldn\'t save rating</string>
+    <string name="trakt_rating_dislike">Dislike</string>
+    <string name="trakt_rating_like">Like</string>
+    <string name="trakt_rating_love">Love</string>
+    <string name="streams_force_fetch">Force fetch</string>
+    <string name="streams_force_fetch_hint">Forces a fresh re-scrape for valid streams of this title.</string>
+    <string name="streams_force_fetch_wait">Please wait a moment</string>
+    <string name="streams_force_fetch_failed">Couldn\'t force fetch</string>
+    <string name="streams_force_fetch_none">No new streams yet</string>
 </resources>

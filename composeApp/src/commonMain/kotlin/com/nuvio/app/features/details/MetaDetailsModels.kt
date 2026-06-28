@@ -99,3 +99,15 @@ data class MetaDetailsUiState(
     val meta: MetaDetails? = null,
     val errorMessage: String? = null,
 )
+
+/**
+ * Reaction buckets for the rate-a-title control, mirroring NuvioTV. A reaction maps a 1–10
+ * star rating to one of three sentiments, each with a default star value used when the user
+ * picks the reaction before fine-tuning: DISLIKE = 1–4 (default 4), LIKE = 5–7 (default 5),
+ * LOVE = 8–10 (default 8).
+ */
+enum class TraktReaction(val defaultRating: Int) {
+    DISLIKE(4),
+    LIKE(5),
+    LOVE(8),
+}

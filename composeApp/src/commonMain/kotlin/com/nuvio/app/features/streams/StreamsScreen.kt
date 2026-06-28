@@ -41,6 +41,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.SearchOff
 import androidx.compose.material3.CircularProgressIndicator
@@ -152,6 +153,22 @@ fun StreamsScreen(
     val noDirectStreamLinkText = stringResource(Res.string.streams_no_direct_link)
     var streamActionsTarget by remember(videoId) { mutableStateOf<StreamItem?>(null) }
     val downloadScope = rememberCoroutineScope()
+    val forceFetchScope = rememberCoroutineScope()
+    var isForceFetching by remember(videoId) { mutableStateOf(false) }
+    // Pre-resolved toast strings so we can show them off the composition thread post-await.
+    val forceFetchWaitText = stringResource(Res.string.streams_force_fetch_wait)
+    val forceFetchFailedText = stringResource(Res.string.streams_force_fetch_failed)
+    val forceFetchNoneText = stringResource(Res.string.streams_force_fetch_none)
+    // Compose the SAME id the stream-list GET uses (series episodes need contentId:season:episode).
+    val rescrapeVideoId = if (
+        type.equals("series", ignoreCase = true) &&
+        seasonNumber != null && episodeNumber != null &&
+        !videoId.contains(':')
+    ) {
+        "$videoId:$seasonNumber:$episodeNumber"
+    } else {
+        videoId
+    }
     var preferredFilterApplied by remember(videoId) { mutableStateOf(false) }
     var autoPlayOverlayLogoLoadError by remember(logo) { mutableStateOf(false) }
     val autoPlayOverlayLogoUrl = logo?.takeIf { it.isNotBlank() }
@@ -300,6 +317,63 @@ fun StreamsScreen(
                     tint = MaterialTheme.colorScheme.onBackground,
                     modifier = Modifier.size(20.dp),
                 )
+            }
+
+            // Force fetch: triggers a fresh server-side re-scrape, then re-fetches the list so
+            // newly-found hashes appear. Disabled while in-flight; 429 → "Please wait a moment".
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .background(
+                        color = MaterialTheme.colorScheme.background.copy(alpha = 0.45f),
+                        shape = CircleShape,
+                    )
+                    .clickable(enabled = !isForceFetching) {
+                        isForceFetching = true
+                        forceFetchScope.launch {
+                            val result = ForceRescrapeService.rescrape(
+                                type = type,
+                                videoId = rescrapeVideoId,
+                            )
+                            when (result) {
+                                is ForceRescrapeService.Result.Success -> {
+                                    // Always re-pull the list (cache cleared) so new hashes show.
+                                    StreamsRepository.reload(
+                                        type = type,
+                                        videoId = videoId,
+                                        parentMetaId = parentMetaId,
+                                        season = seasonNumber,
+                                        episode = episodeNumber,
+                                        manualSelection = manualSelection,
+                                    )
+                                    if (!result.ok || result.added <= 0) {
+                                        NuvioToastController.show(forceFetchNoneText)
+                                    }
+                                }
+                                is ForceRescrapeService.Result.RateLimited ->
+                                    NuvioToastController.show(forceFetchWaitText)
+                                is ForceRescrapeService.Result.Failure ->
+                                    NuvioToastController.show(forceFetchFailedText)
+                            }
+                            isForceFetching = false
+                        }
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                if (isForceFetching) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onBackground,
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Rounded.CloudDownload,
+                        contentDescription = stringResource(Res.string.streams_force_fetch_hint),
+                        tint = MaterialTheme.colorScheme.onBackground,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
             }
         }
 
