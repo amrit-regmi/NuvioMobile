@@ -33,6 +33,11 @@ data class StreamItem(
     val debridCacheStatus: StreamDebridCacheStatus? = null,
     val externalSubtitles: List<StreamSubtitle> = emptyList(),
     val badges: List<StreamBadge> = emptyList(),
+    /** Backend-parsed structured stream metadata (catalog-addon `streamInfo`).
+     *  When present the stream row renders the clean unified layout from this
+     *  instead of the raw torrent name/description. Null for addon streams that
+     *  don't carry it. See api_bridge.md "Structured stream object". */
+    val streamInfo: StreamInfo? = null,
 ) {
     val streamLabel: String
         get() = name ?: runBlocking { getString(Res.string.stream_default_name) }
@@ -109,6 +114,43 @@ data class StreamItem(
 
     val hasPlayableSource: Boolean
         get() = url != null || infoHash != null || externalUrl != null || clientResolve != null
+}
+
+/**
+ * Structured, backend-parsed stream metadata. Rendered as the unified stream row
+ * (same layout on TV + mobile): title · SxEx + cache badge / quality / video·DR /
+ * audio / channels / size · bitrate. Any null/blank field hides its line.
+ */
+data class StreamInfo(
+    val title: String? = null,
+    val season: Int? = null,
+    val episode: Int? = null,
+    /** "instant" | "cached" | "not_cached" */
+    val cacheStatus: String? = null,
+    val quality: String? = null,
+    val resolution: String? = null,
+    val videoCodec: String? = null,
+    val dynamicRange: List<String> = emptyList(),
+    val audioCodec: String? = null,
+    val audioChannels: String? = null,
+    val sizeBytes: Long? = null,
+    val sizeLabel: String? = null,
+    val bitrateBps: Long? = null,
+    val bitrateLabel: String? = null,
+) {
+    val cacheState: StreamCacheState?
+        get() = when (cacheStatus?.trim()?.lowercase()) {
+            "instant" -> StreamCacheState.INSTANT
+            "cached" -> StreamCacheState.CACHED
+            "not_cached" -> StreamCacheState.NOT_CACHED
+            else -> null
+        }
+}
+
+enum class StreamCacheState(val label: String) {
+    INSTANT("Instant"),
+    CACHED("Cached"),
+    NOT_CACHED("Not Cached"),
 }
 
 data class StreamBadge(

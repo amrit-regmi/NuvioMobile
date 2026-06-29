@@ -58,9 +58,28 @@ object StreamParser {
                     filename = hintsObj?.string("filename"),
                     proxyHeaders = proxyHeaders,
                 ),
+                streamInfo = obj.objectValue("streamInfo")?.toStreamInfo(),
             )
         }
     }
+
+    private fun JsonObject.toStreamInfo(): StreamInfo =
+        StreamInfo(
+            title = string("title"),
+            season = int("season"),
+            episode = int("episode"),
+            cacheStatus = string("cacheStatus"),
+            quality = string("quality"),
+            resolution = string("resolution"),
+            videoCodec = string("videoCodec"),
+            dynamicRange = stringList("dynamicRange"),
+            audioCodec = string("audioCodec"),
+            audioChannels = string("audioChannels"),
+            sizeBytes = long("sizeBytes"),
+            sizeLabel = string("sizeLabel"),
+            bitrateBps = long("bitrateBps"),
+            bitrateLabel = string("bitrateLabel"),
+        )
 
     private fun JsonObject.string(name: String): String? =
         this[name]?.jsonPrimitive?.contentOrNull

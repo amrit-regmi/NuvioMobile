@@ -97,45 +97,56 @@ internal fun StreamCard(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            if (hasBadges && badgePlacement == StreamBadgePlacement.TOP) {
-                StreamCardBadgeRow(
-                    badgeImages = badgeImages,
-                    stream = stream,
-                    showFileSizeBadges = showFileSizeBadges,
+            val info = stream.streamInfo
+            if (info != null) {
+                // Unified, structured stream row (drops the raw torrent name).
+                StreamInfoContent(
+                    info = info,
+                    isCurrent = isCurrent,
+                    currentLabel = currentLabel,
                 )
-                Spacer(modifier = Modifier.height(6.dp))
-            }
-
-            StreamNameWithInstantService(
-                stream = stream,
-                appendInstantServiceToDefaultName = appendInstantServiceToDefaultName,
-            ) {
-                if (isCurrent && !currentLabel.isNullOrBlank()) {
-                    Spacer(modifier = Modifier.width(8.dp))
-                    CurrentStreamBadge(label = currentLabel)
+            } else {
+                // Legacy rendering for addon streams without backend streamInfo.
+                if (hasBadges && badgePlacement == StreamBadgePlacement.TOP) {
+                    StreamCardBadgeRow(
+                        badgeImages = badgeImages,
+                        stream = stream,
+                        showFileSizeBadges = showFileSizeBadges,
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
                 }
-            }
 
-            val subtitle = stream.streamSubtitle
-            if (!subtitle.isNullOrBlank()) {
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.bodySmall.copy(
-                        fontSize = 12.sp,
-                        lineHeight = 18.sp,
-                    ),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-
-            if (hasBadges && badgePlacement == StreamBadgePlacement.BOTTOM) {
-                Spacer(modifier = Modifier.height(5.dp))
-                StreamCardBadgeRow(
-                    badgeImages = badgeImages,
+                StreamNameWithInstantService(
                     stream = stream,
-                    showFileSizeBadges = showFileSizeBadges,
-                )
+                    appendInstantServiceToDefaultName = appendInstantServiceToDefaultName,
+                ) {
+                    if (isCurrent && !currentLabel.isNullOrBlank()) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        CurrentStreamBadge(label = currentLabel)
+                    }
+                }
+
+                val subtitle = stream.streamSubtitle
+                if (!subtitle.isNullOrBlank()) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontSize = 12.sp,
+                            lineHeight = 18.sp,
+                        ),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+
+                if (hasBadges && badgePlacement == StreamBadgePlacement.BOTTOM) {
+                    Spacer(modifier = Modifier.height(5.dp))
+                    StreamCardBadgeRow(
+                        badgeImages = badgeImages,
+                        stream = stream,
+                        showFileSizeBadges = showFileSizeBadges,
+                    )
+                }
             }
         }
 
@@ -242,6 +253,113 @@ private fun StreamNameWithInstantService(
             )
         }
         trailingContent()
+    }
+}
+
+@Composable
+private fun StreamInfoContent(
+    info: StreamInfo,
+    isCurrent: Boolean,
+    currentLabel: String?,
+) {
+    val nameStyle = MaterialTheme.typography.bodyMedium.copy(
+        fontSize = 14.sp,
+        fontWeight = FontWeight.Bold,
+        lineHeight = 20.sp,
+        letterSpacing = 0.sp,
+    )
+    val lineStyle = MaterialTheme.typography.bodySmall.copy(
+        fontSize = 12.sp,
+        lineHeight = 18.sp,
+    )
+    val secondaryColor = MaterialTheme.colorScheme.onSurfaceVariant
+
+    // Line 1: <title> · S<season> E<episode>   [cache badge]
+    val seText = buildString {
+        info.season?.let { append("S").append(it) }
+        info.episode?.let {
+            if (isNotEmpty()) append(" ")
+            append("E").append(it)
+        }
+    }
+    val titleLine = listOfNotNull(
+        info.title?.takeIf { it.isNotBlank() },
+        seText.takeIf { it.isNotBlank() },
+    ).joinToString("  ·  ")
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = titleLine,
+            modifier = Modifier.weight(1f),
+            style = nameStyle,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+        info.cacheState?.let { state ->
+            Spacer(modifier = Modifier.width(8.dp))
+            CacheStatusPill(state)
+        }
+    }
+
+    if (isCurrent && !currentLabel.isNullOrBlank()) {
+        Spacer(modifier = Modifier.height(4.dp))
+        CurrentStreamBadge(label = currentLabel)
+    }
+
+    // Lines 2-6 — each hidden when empty.
+    val secondaryLines = buildList {
+        info.quality?.takeIf { it.isNotBlank() }?.let { add(it) }
+        val videoLine = (
+            listOfNotNull(info.videoCodec?.takeIf { it.isNotBlank() }) +
+                info.dynamicRange.filter { it.isNotBlank() }
+            ).joinToString("  ·  ")
+        if (videoLine.isNotBlank()) add(videoLine)
+        info.audioCodec?.takeIf { it.isNotBlank() }?.let { add(it) }
+        info.audioChannels?.takeIf { it.isNotBlank() }?.let { add(it) }
+        val sizeLine = listOfNotNull(
+            info.sizeLabel?.takeIf { it.isNotBlank() },
+            info.bitrateLabel?.takeIf { it.isNotBlank() },
+        ).joinToString("  ·  ")
+        if (sizeLine.isNotBlank()) add(sizeLine)
+    }
+    secondaryLines.forEach { line ->
+        Spacer(modifier = Modifier.height(2.dp))
+        Text(
+            text = line,
+            style = lineStyle,
+            color = secondaryColor,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun CacheStatusPill(state: StreamCacheState) {
+    // Minimalist monochrome pill — no colour coding, just a clean outlined label.
+    val tint = MaterialTheme.colorScheme.onSurfaceVariant
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .border(
+                width = 1.dp,
+                color = tint.copy(alpha = 0.45f),
+                shape = RoundedCornerShape(999.dp),
+            )
+            .padding(horizontal = 8.dp, vertical = 2.dp),
+    ) {
+        Text(
+            text = state.label,
+            color = tint,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
