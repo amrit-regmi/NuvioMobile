@@ -139,3 +139,20 @@ jobs:
           files: ${{ steps.apk.outputs.path }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prune old releases (keep latest 2)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Keep only the two most recent releases visible to the in-app updater.
+          # Older releases (and their tags) are deleted automatically after each publish.
+          # Pre-rebrand (Nuvio) builds were archived off-repo before this automation.
+          mapfile -t OLD < <(gh release list --limit 100 --json tagName,createdAt \
+            --jq 'sort_by(.createdAt) | reverse | .[2:] | .[].tagName')
+          if [ "${#OLD[@]}" -eq 0 ]; then
+            echo "Nothing to prune (<= 2 releases)."; exit 0
+          fi
+          for tag in "${OLD[@]}"; do
+            echo "Deleting old release $tag (and its tag)"
+            gh release delete "$tag" --yes --cleanup-tag
+          done
