@@ -32,6 +32,12 @@ actual object PlayerSettingsStorage {
     private const val secondaryPreferredAudioLanguageKey = "secondary_preferred_audio_language"
     private const val preferredSubtitleLanguageKey = "preferred_subtitle_language"
     private const val secondaryPreferredSubtitleLanguageKey = "secondary_preferred_subtitle_language"
+    // Cross-app SYNC-BLOB key names for subtitle language. TV and the backend
+    // (config_store.get_subtitle_langs / warm_subtitle_cache / catalog subtitle
+    // resolve) all read these names. The LOCAL SharedPrefs keys above stay as-is;
+    // only the synced payload must conform so the backend + TV see our preference.
+    private const val syncSubtitlePreferredLanguageKey = "subtitle_preferred_language"
+    private const val syncSubtitleSecondaryLanguageKey = "subtitle_secondary_language"
     private const val subtitleTextColorKey = "subtitle_text_color"
     private const val subtitleBackgroundColorKey = "subtitle_background_color"
     private const val subtitleOutlineColorKey = "subtitle_outline_color"
@@ -1065,8 +1071,8 @@ actual object PlayerSettingsStorage {
         loadExternalPlayerId()?.let { put(externalPlayerIdKey, encodeSyncString(it)) }
         loadPreferredAudioLanguage()?.let { put(preferredAudioLanguageKey, encodeSyncString(it)) }
         loadSecondaryPreferredAudioLanguage()?.let { put(secondaryPreferredAudioLanguageKey, encodeSyncString(it)) }
-        loadPreferredSubtitleLanguage()?.let { put(preferredSubtitleLanguageKey, encodeSyncString(it)) }
-        loadSecondaryPreferredSubtitleLanguage()?.let { put(secondaryPreferredSubtitleLanguageKey, encodeSyncString(it)) }
+        loadPreferredSubtitleLanguage()?.let { put(syncSubtitlePreferredLanguageKey, encodeSyncString(it)) }
+        loadSecondaryPreferredSubtitleLanguage()?.let { put(syncSubtitleSecondaryLanguageKey, encodeSyncString(it)) }
         loadSubtitleTextColor()?.let { put(subtitleTextColorKey, encodeSyncString(it)) }
         loadSubtitleBackgroundColor()?.let { put(subtitleBackgroundColorKey, encodeSyncString(it)) }
         loadSubtitleOutlineColor()?.let { put(subtitleOutlineColorKey, encodeSyncString(it)) }
@@ -1139,8 +1145,14 @@ actual object PlayerSettingsStorage {
         payload.decodeSyncString(externalPlayerIdKey)?.let(::saveExternalPlayerId)
         payload.decodeSyncString(preferredAudioLanguageKey)?.let(::savePreferredAudioLanguage)
         payload.decodeSyncString(secondaryPreferredAudioLanguageKey)?.let(::saveSecondaryPreferredAudioLanguage)
-        payload.decodeSyncString(preferredSubtitleLanguageKey)?.let(::savePreferredSubtitleLanguage)
-        payload.decodeSyncString(secondaryPreferredSubtitleLanguageKey)?.let(::saveSecondaryPreferredSubtitleLanguage)
+        // Read the shared cross-app key first, falling back to the legacy mobile-only
+        // key name for back-compat with blobs written before this alignment.
+        (payload.decodeSyncString(syncSubtitlePreferredLanguageKey)
+            ?: payload.decodeSyncString(preferredSubtitleLanguageKey))
+            ?.let(::savePreferredSubtitleLanguage)
+        (payload.decodeSyncString(syncSubtitleSecondaryLanguageKey)
+            ?: payload.decodeSyncString(secondaryPreferredSubtitleLanguageKey))
+            ?.let(::saveSecondaryPreferredSubtitleLanguage)
         payload.decodeSyncString(subtitleTextColorKey)?.let(::saveSubtitleTextColor)
         payload.decodeSyncString(subtitleBackgroundColorKey)?.let(::saveSubtitleBackgroundColor)
         payload.decodeSyncString(subtitleOutlineColorKey)?.let(::saveSubtitleOutlineColor)
