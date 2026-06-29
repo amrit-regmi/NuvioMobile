@@ -104,7 +104,10 @@ fun DetailRatingControl(
     var isSubmitting by remember { mutableStateOf(false) }
 
     LaunchedEffect(meta.id, meta.type) {
-        val resolved = RatingService.resolveTmdbId(meta.id, meta.type)
+        // Prefer the TMDB id the backend serves in the meta (no client-side TMDB
+        // key required — we don't ship one). Fall back to id/IMDb resolution only
+        // for addon metas that don't carry it. See #111.
+        val resolved = meta.tmdbId ?: RatingService.resolveTmdbId(meta.id, meta.type)
         tmdbId = resolved
         if (resolved != null) {
             currentRating = RatingService.fetchRating(resolved, meta.type)

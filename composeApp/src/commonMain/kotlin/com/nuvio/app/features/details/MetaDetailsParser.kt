@@ -32,6 +32,10 @@ internal object MetaDetailsParser {
             id = meta.requiredString("id"),
             type = meta.requiredString("type"),
             name = meta.requiredString("name"),
+            // Backend serves the TMDB id directly (meta.tmdb_id, mirrored in
+            // behaviorHints.tmdb_id) so the rating control can target it WITHOUT a
+            // client-side TMDB key — we deliberately don't ship one. See #111.
+            tmdbId = meta.intOrNull("tmdb_id") ?: meta.behaviorHints().intOrNull("tmdb_id"),
             poster = meta.string("poster"),
             background = meta.string("background"),
             logo = meta.string("logo"),
@@ -62,6 +66,9 @@ internal object MetaDetailsParser {
 
     private fun JsonObject.string(name: String): String? =
         this[name]?.jsonPrimitive?.contentOrNull
+
+    private fun JsonObject.intOrNull(name: String): Int? =
+        this[name]?.jsonPrimitive?.intOrNull
 
     private fun JsonObject.array(name: String): JsonArray =
         this[name] as? JsonArray ?: JsonArray(emptyList())

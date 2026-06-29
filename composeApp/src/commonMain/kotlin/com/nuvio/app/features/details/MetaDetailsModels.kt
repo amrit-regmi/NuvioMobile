@@ -7,6 +7,9 @@ data class MetaDetails(
     val id: String,
     val type: String,
     val name: String,
+    /** TMDB id served by the backend (meta.tmdb_id) — lets the rating control
+     *  target a title without a client-side TMDB key. Null for addon metas. */
+    val tmdbId: Int? = null,
     val poster: String? = null,
     val background: String? = null,
     val logo: String? = null,
