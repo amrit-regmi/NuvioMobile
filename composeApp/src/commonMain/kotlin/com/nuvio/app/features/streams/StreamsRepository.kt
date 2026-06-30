@@ -32,11 +32,30 @@ import kotlinx.coroutines.launch
 object StreamsRepository {
     private val log = Logger.withTag("StreamsRepo")
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    /** cacheStatus poll cadence (short, mirrors TV's ~3s tick). */
+    private const val STATUS_POLL_INTERVAL_MS = 3_000L
+    /** Hard ceiling on how long the cacheStatus poll runs per list (~2 min). */
+    private const val STATUS_POLL_MAX_MS = 120_000L
     private val _uiState = MutableStateFlow(StreamsUiState())
     val uiState: StateFlow<StreamsUiState> = _uiState.asStateFlow()
 
     private var activeJob: Job? = null
+    private var statusPollJob: Job? = null
     private var activeRequestKey: String? = null
+
+    /** Full args of the most recent load(), so a post-prewarm refresh can replay them exactly. */
+    private data class LoadParams(
+        val type: String,
+        val videoId: String,
+        val parentMetaId: String?,
+        val season: Int?,
+        val episode: Int?,
+        val manualSelection: Boolean,
+    )
+    private var lastLoadParams: LoadParams? = null
+    /** requestToken we've already auto-refreshed for once (debounces repeat prewarm completions). */
+    private var prewarmRefreshedToken: String? = null
 
     fun requestToken(
         type: String,
@@ -72,6 +91,45 @@ object StreamsRepository {
     }
 
     /**
+     * Called when the backend prewarm for [rawVideoId] completes. If the stream list currently on
+     * screen is for that exact title/episode, replay the original load with forceRefresh so the
+     * freshly-computed server fields (subtitleLanguages, audioLanguages, cacheStatus) appear in the
+     * row without the user having to leave and re-enter. Debounced to once per displayed list so
+     * repeated prewarm completions don't re-load repeatedly. [rawVideoId] may be "tt123" (movie) or
+     * "tt123:S:E" (series); we split S:E to match how the list was loaded.
+     */
+    fun refreshAfterPrewarm(type: String, rawVideoId: String) {
+        val last = lastLoadParams ?: return
+        if (_uiState.value.groups.isEmpty()) return // nothing displayed to refresh
+        val parts = rawVideoId.split(":")
+        val videoId = parts.getOrNull(0).orEmpty()
+        val season = parts.getOrNull(1)?.toIntOrNull()
+        val episode = parts.getOrNull(2)?.toIntOrNull()
+        // Must match the list currently on screen (type + id + season/episode).
+        val sameType = last.type.equals(type, ignoreCase = true) ||
+            normalizeKind(last.type) == normalizeKind(type)
+        if (!sameType || last.videoId != videoId || last.season != season || last.episode != episode) return
+        val token = _uiState.value.requestToken ?: return
+        if (prewarmRefreshedToken == token) return // already refreshed this list once
+        prewarmRefreshedToken = token
+        log.d { "refreshAfterPrewarm: reloading stream list for $type/$rawVideoId" }
+        reload(
+            type = last.type,
+            videoId = last.videoId,
+            parentMetaId = last.parentMetaId,
+            season = last.season,
+            episode = last.episode,
+            manualSelection = last.manualSelection,
+        )
+    }
+
+    private fun normalizeKind(t: String): String = when (t.trim().lowercase()) {
+        "movie", "film" -> "movie"
+        "series", "show", "tv", "tvshow" -> "series"
+        else -> t.trim().lowercase()
+    }
+
+    /**
      * Swaps in the warm-resolved direct url for any direct-debrid stream in [group] that has a fresh
      * entry in [ResolvedStreamCache] but no playable url yet, flipping it to a ready/"Tier-1" state.
      * Synchronous (cache reads are non-suspending); returns the SAME instance when nothing changed
@@ -86,11 +144,111 @@ object StreamsRepository {
                 val resolvedUrl = ResolvedStreamCache.get(stream, season, episode)
                 if (!resolvedUrl.isNullOrBlank()) {
                     changed = true
-                    stream.copy(url = resolvedUrl)
+                    // Warm-resolved url is now cached → this stream IS instantly playable.
+                    // Flip the streamInfo cache pill to "instant" so the UI reflects real
+                    // readiness (the backend's cacheStatus was computed before the warm landed).
+                    stream.copy(
+                        url = resolvedUrl,
+                        streamInfo = stream.streamInfo?.copy(cacheStatus = "instant"),
+                    )
                 } else stream
             } else stream
         }
         return if (changed) group.copy(streams = streams) else group
+    }
+
+    /** Ordinal of a cacheStatus string for "never downgrade" comparisons (higher = readier). */
+    private fun cacheStatusRank(status: String?): Int = when (status?.trim()?.lowercase()) {
+        "instant" -> 3
+        "cached" -> 2
+        "downloading" -> 1
+        "not_cached" -> 0
+        else -> -1 // unknown/absent — any concrete status promotes over it
+    }
+
+    /**
+     * Applies a `info_hash -> tier` promotion map (from [StreamStatusPoller]) to [group], flipping
+     * each matching stream's cacheStatus toward instant/cached. NEVER downgrades (uses
+     * [cacheStatusRank]); returns the SAME instance when nothing changed so callers detect no-ops.
+     */
+    private fun promoteGroupFromStatus(
+        group: AddonStreamGroup,
+        statusByHash: Map<String, StreamStatusPoller.StatusTier>,
+    ): AddonStreamGroup {
+        if (statusByHash.isEmpty()) return group
+        var changed = false
+        val streams = group.streams.map { stream ->
+            val hash = (stream.infoHash ?: stream.clientResolve?.infoHash)
+                ?.trim()?.lowercase()?.takeIf { it.isNotEmpty() } ?: return@map stream
+            val tier = statusByHash[hash] ?: return@map stream
+            val target = when (tier) {
+                StreamStatusPoller.StatusTier.INSTANT -> "instant"
+                StreamStatusPoller.StatusTier.CACHED -> "cached"
+            }
+            val current = stream.streamInfo?.cacheStatus
+            if (cacheStatusRank(target) <= cacheStatusRank(current)) return@map stream // never downgrade
+            changed = true
+            val info = stream.streamInfo ?: StreamInfo()
+            stream.copy(streamInfo = info.copy(cacheStatus = target))
+        }
+        return if (changed) group.copy(streams = streams) else group
+    }
+
+    /** True if any stream in [groups] is not yet at the top "instant" tier (so polling can still promote it). */
+    private fun hasPromotableStreams(groups: List<AddonStreamGroup>): Boolean =
+        groups.any { group ->
+            group.streams.any { stream ->
+                val hasHash = !(stream.infoHash ?: stream.clientResolve?.infoHash).isNullOrBlank()
+                hasHash && cacheStatusRank(stream.streamInfo?.cacheStatus) < cacheStatusRank("instant")
+            }
+        }
+
+    /**
+     * Short-interval, bounded poll of the UNCACHED status endpoint ([StreamStatusPoller]) that
+     * promotes on-screen streams' cacheStatus toward instant/cached while the user is on the list /
+     * details (where the backend prewarm runs). Mirrors NuvioTV's cacheStatus poll (commit 2bfc971d).
+     *
+     * Lifecycle: scoped to [requestToken] — re-checks it on every tick and bails the moment the
+     * displayed list changes (new title/episode) or this poll is superseded. Stops when nothing is
+     * left to promote (all promotable streams reached "instant") or after [STATUS_POLL_MAX_MS].
+     *
+     * Does NOT re-fetch the full `/stream/....json` list (which is `max-age=60` cached and serves
+     * stale "downloading"); only the lightweight status endpoint.
+     */
+    private fun startStatusPoll(type: String, streamId: String, requestToken: String) {
+        statusPollJob?.cancel()
+        statusPollJob = scope.launch {
+            val deadline = epochMs() + STATUS_POLL_MAX_MS
+            // Wait briefly for the first streams to render so we have hashes to match against.
+            while (
+                _uiState.value.requestToken == requestToken &&
+                _uiState.value.groups.flatMap { it.streams }.isEmpty() &&
+                epochMs() < deadline
+            ) {
+                delay(STATUS_POLL_INTERVAL_MS)
+            }
+            while (_uiState.value.requestToken == requestToken && epochMs() < deadline) {
+                // Nothing left to promote → stop early.
+                if (!hasPromotableStreams(_uiState.value.groups)) break
+
+                val statusByHash = StreamStatusPoller.fetch(type, streamId)
+                if (statusByHash.isNotEmpty() && _uiState.value.requestToken == requestToken) {
+                    _uiState.update { current ->
+                        if (current.requestToken != requestToken) return@update current
+                        var changed = false
+                        val groups = current.groups.map { group ->
+                            val promoted = promoteGroupFromStatus(group, statusByHash)
+                            if (promoted !== group) changed = true
+                            promoted
+                        }
+                        if (changed) current.copy(groups = groups) else current
+                    }
+                }
+                if (!hasPromotableStreams(_uiState.value.groups)) break
+                delay(STATUS_POLL_INTERVAL_MS)
+            }
+            log.d { "status poll finished for $type/$streamId" }
+        }
     }
 
     private fun load(type: String, videoId: String, parentMetaId: String?, season: Int?, episode: Int?, manualSelection: Boolean, forceRefresh: Boolean) {
@@ -118,6 +276,11 @@ object StreamsRepository {
             return
         }
 
+        // Only clear the one-shot refresh guard when this is a genuinely new request (different
+        // title/episode). A forceRefresh of the SAME request (e.g. our own post-prewarm reload)
+        // keeps the guard set so repeat prewarm completions don't trigger a refresh storm.
+        if (requestKey != activeRequestKey) prewarmRefreshedToken = null
+        lastLoadParams = LoadParams(type, videoId, parentMetaId, season, episode, manualSelection)
         activeRequestKey = requestKey
         activeJob?.cancel()
         _uiState.value = StreamsUiState(requestToken = requestToken)
@@ -141,6 +304,22 @@ object StreamsRepository {
                 if (changed) current.copy(groups = groups) else current
             }
         }
+
+        // PARITY 1 (mirrors NuvioTV 2bfc971d): poll the UNCACHED status endpoint to live-promote the
+        // cache pill (downloading → cached → instant) while the user is on the list / details, where
+        // the backend prewarm runs. Uses the SAME Stremio stream id the list loads with (series get
+        // the :season:episode qualifier). Lifecycle-scoped to [requestToken]; self-stops when nothing
+        // is promotable or after the bound.
+        val statusStreamId = if (
+            type.equals("series", ignoreCase = true) &&
+            season != null && episode != null &&
+            !videoId.contains(':')
+        ) {
+            "$videoId:$season:$episode"
+        } else {
+            videoId
+        }
+        startStatusPoll(type = type, streamId = statusStreamId, requestToken = requestToken)
 
         PlayerSettingsRepository.ensureLoaded()
         val playerSettings = PlayerSettingsRepository.uiState.value
@@ -952,6 +1131,8 @@ object StreamsRepository {
     fun clear() {
         activeJob?.cancel()
         activeJob = null
+        statusPollJob?.cancel()
+        statusPollJob = null
         activeRequestKey = null
         _uiState.value = StreamsUiState()
     }
