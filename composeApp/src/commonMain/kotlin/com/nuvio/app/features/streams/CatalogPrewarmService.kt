@@ -10,6 +10,13 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -36,6 +43,33 @@ object CatalogPrewarmService {
 
     /** Dedup guard: prewarm keys (type/video_id) currently in flight. */
     private val inFlight = mutableSetOf<String>()
+
+    /** A finished prewarm. videoId is the raw form passed to [prewarm] ("tt123" or "tt123:S:E"). */
+    data class PrewarmCompletion(val type: String, val videoId: String, val warmed: Boolean, val subsReady: Boolean)
+
+    private val _completions = MutableSharedFlow<PrewarmCompletion>(extraBufferCapacity = 16)
+    /** Emitted whenever a prewarm POST returns successfully. Observers can refresh the stream list. */
+    val completions: SharedFlow<PrewarmCompletion> = _completions.asSharedFlow()
+
+    /**
+     * Last-known per-title cache hint from prewarm, keyed "type/videoId" (e.g. "movie/tt123",
+     * "series/tt123:1:8"). value: true = a cached/playable stream exists (nothing to download →
+     * hide the Download button); false = not cached (offer Download); key absent = unknown yet.
+     * A StateFlow (not the SharedFlow) so a late-subscribing UI still reads the latest value.
+     */
+    private val _cacheHints = MutableStateFlow<Map<String, Boolean>>(emptyMap())
+    val cacheHints: StateFlow<Map<String, Boolean>> = _cacheHints.asStateFlow()
+
+    /** Build the [cacheHints] map key for a (type, videoId) pair. */
+    fun cacheHintKey(type: String, videoId: String): String = "$type/$videoId"
+
+    /**
+     * Mark a title as cached (e.g. a download just finished) so the detail Download button hides
+     * without waiting for a fresh prewarm. type is the normalized "movie"/"series" form.
+     */
+    fun markCached(type: String, videoId: String) {
+        _cacheHints.update { it + (cacheHintKey(type, videoId) to true) }
+    }
 
     private fun isAuthenticated(): Boolean {
         val state = AuthRepository.state.value
@@ -69,6 +103,21 @@ object CatalogPrewarmService {
                 if (!headers.containsKey("Authorization")) return@launch
                 val body = httpPostJsonWithHeaders(url, "", headers)
                 log.d { "Prewarmed $key → ${body.take(200)}" }
+                // Signal completion so an open stream list can refresh its server-computed fields
+                // (subtitleLanguages / audioLanguages / cacheStatus). Lightweight contains-checks
+                // avoid pulling a JSON parser onto this best-effort path.
+                val warmed = body.contains("\"warmed\":true")
+                // Record the cache hint so the detail-screen Download button can gate itself:
+                // warmed → a cached/playable stream exists (hide Download); else not cached (offer it).
+                _cacheHints.update { it + (key to warmed) }
+                _completions.tryEmit(
+                    PrewarmCompletion(
+                        type = normalizedType,
+                        videoId = id,
+                        warmed = warmed,
+                        subsReady = body.contains("\"subs_ready\":true"),
+                    ),
+                )
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {

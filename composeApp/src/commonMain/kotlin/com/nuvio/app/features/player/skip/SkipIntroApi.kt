@@ -1,6 +1,8 @@
 package com.nuvio.app.features.player.skip
 
+import com.nuvio.app.core.network.BackendAuth
 import com.nuvio.app.features.addons.httpGetText
+import com.nuvio.app.features.addons.httpGetTextWithHeaders
 import com.nuvio.app.features.addons.httpPostJsonWithHeaders
 import kotlinx.serialization.json.Json
 
@@ -23,7 +25,9 @@ internal object SkipIntroApi {
         if (baseUrl.isBlank()) return null
         val url = "$baseUrl/segments?imdb_id=$imdbId&season=$season&episode=$episode"
         return try {
-            val text = httpGetText(url)
+            // Our backend's /catalog-addon/skip/segments is Bearer-gated like every other
+            // catalog-addon data endpoint, so attach the host-matched Supabase token.
+            val text = httpGetTextWithHeaders(url, BackendAuth.authHeadersFor(url))
             json.decodeFromString<IntroDbSegmentsResponse>(text)
         } catch (_: Exception) {
             null

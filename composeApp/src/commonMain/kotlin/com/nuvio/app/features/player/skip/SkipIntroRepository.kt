@@ -192,10 +192,11 @@ object SkipIntroRepository {
 
     private fun IntroDbSegment?.toSkipIntervalOrNull(type: String): SkipInterval? {
         if (this == null) return null
-        val start = startSec ?: startMs?.let { it / 1000.0 }
-        val end = endSec ?: endMs?.let { it / 1000.0 }
-        if (start == null || end == null || end <= start) return null
-        return SkipInterval(startTime = start, endTime = end, type = type, provider = "introdb")
+        // Prefer our backend's normalized seconds ({"start","end"}); fall back to introdb-native.
+        val startVal = start ?: startSec ?: startMs?.let { it / 1000.0 }
+        val endVal = end ?: endSec ?: endMs?.let { it / 1000.0 }
+        if (startVal == null || endVal == null || endVal <= startVal) return null
+        return SkipInterval(startTime = startVal, endTime = endVal, type = type, provider = "introdb")
     }
 
     private suspend fun fetchFromAniSkip(malId: String, episode: Int): List<SkipInterval> {

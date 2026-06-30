@@ -41,6 +41,10 @@ data class IntroDbSegmentsResponse(
 
 @Serializable
 data class IntroDbSegment(
+    // Our backend's normalized shape ({"start","end"} in seconds) is preferred; the *_sec/*_ms
+    // fields are introdb's native shape, kept as a fallback so the model decodes either source.
+    @SerialName("start") val start: Double? = null,
+    @SerialName("end") val end: Double? = null,
     @SerialName("start_sec") val startSec: Double? = null,
     @SerialName("end_sec") val endSec: Double? = null,
     @SerialName("start_ms") val startMs: Long? = null,

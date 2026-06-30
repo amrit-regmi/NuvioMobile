@@ -905,6 +905,15 @@ private fun MainAppContent(
         }
     }
 
+    // When a details-open prewarm finishes, refresh an open stream list so the server-computed
+    // row fields (subtitle languages / audio languages / cache status) appear without the user
+    // having to leave and re-enter. StreamsRepository no-ops unless the displayed list matches.
+    LaunchedEffect(Unit) {
+        CatalogPrewarmService.completions.collect { done ->
+            StreamsRepository.refreshAfterPrewarm(done.type, done.videoId)
+        }
+    }
+
     LaunchedEffect(networkStatusUiState.condition) {
         val condition = networkStatusUiState.condition
         if (!networkToastBaselineReady) {

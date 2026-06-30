@@ -66,19 +66,26 @@ object StreamParser {
     private fun JsonObject.toStreamInfo(): StreamInfo =
         StreamInfo(
             title = string("title"),
+            year = int("year"),
             season = int("season"),
             episode = int("episode"),
             cacheStatus = string("cacheStatus"),
             quality = string("quality"),
+            source = string("source"),
             resolution = string("resolution"),
             videoCodec = string("videoCodec"),
+            bitDepth = string("bitDepth"),
             dynamicRange = stringList("dynamicRange"),
             audioCodec = string("audioCodec"),
             audioChannels = string("audioChannels"),
+            audioLanguages = stringList("audioLanguages"),
+            subtitleLanguages = stringList("subtitleLanguages"),
             sizeBytes = long("sizeBytes"),
             sizeLabel = string("sizeLabel"),
             bitrateBps = long("bitrateBps"),
             bitrateLabel = string("bitrateLabel"),
+            runtimeMinutes = int("runtimeMinutes"),
+            runtimeLabel = string("runtimeLabel"),
         )
 
     private fun JsonObject.string(name: String): String? =
