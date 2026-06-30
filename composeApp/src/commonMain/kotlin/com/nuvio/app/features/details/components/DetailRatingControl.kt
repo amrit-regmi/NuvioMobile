@@ -100,7 +100,6 @@ fun DetailRatingControl(
     var tmdbId by remember(meta.id) { mutableStateOf<Int?>(null) }
     var currentRating by remember(meta.id) { mutableStateOf<Int?>(null) }
     var loaded by remember(meta.id) { mutableStateOf(false) }
-    var showPicker by remember { mutableStateOf(false) }
     var isSubmitting by remember { mutableStateOf(false) }
 
     LaunchedEffect(meta.id, meta.type) {
@@ -118,227 +117,76 @@ fun DetailRatingControl(
     // Only show the control once we can target a tmdb id (the backend requires it).
     if (!loaded || tmdbId == null) return
 
-    Row(
+    val savedText = stringResource(Res.string.settings_rating_saved)
+    val failedText = stringResource(Res.string.settings_rating_save_failed)
+    val rating = currentRating
+    val reaction = rating?.let { reactionForRating(it) }
+    val starTint = reaction?.let { reactionColor(it) } ?: MaterialTheme.colorScheme.primary
+
+    // Inline, always-visible precise picker (no dialog): a 1–10 star strip with a live
+    // label. Tapping a (half-)star submits that exact score to OUR backend immediately.
+    Column(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Text(
-            text = stringResource(Res.string.settings_rating_title),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
         Row(
-            modifier = Modifier.clickable(enabled = !isSubmitting) { showPicker = true },
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            val rating = currentRating
-            val iconSize = if (isTablet) 22.dp else 20.dp
-            if (rating != null) {
-                val reaction = reactionForRating(rating)
+            Text(
+                text = stringResource(Res.string.settings_rating_title),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (rating != null && reaction != null) {
                 Icon(
                     imageVector = reactionIcon(reaction),
                     contentDescription = null,
-                    tint = reactionColor(reaction),
-                    modifier = Modifier.size(iconSize),
+                    tint = starTint,
+                    modifier = Modifier.size(18.dp),
                 )
                 Text(
                     text = "$rating/10",
-                    style = MaterialTheme.typography.bodyLarge,
+                    style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
             } else {
-                Icon(
-                    imageVector = Icons.Rounded.StarBorder,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(iconSize),
-                )
                 Text(
                     text = stringResource(Res.string.settings_rating_action_rate),
-                    style = MaterialTheme.typography.bodyLarge,
+                    style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.primary,
                 )
             }
+            if (isSubmitting) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(14.dp),
+                    strokeWidth = 2.dp,
+                    color = starTint,
+                )
+            }
         }
-    }
-
-    if (showPicker) {
-        val savedText = stringResource(Res.string.settings_rating_saved)
-        val failedText = stringResource(Res.string.settings_rating_save_failed)
-        RatingPickerDialog(
-            currentRating = currentRating,
-            isSubmitting = isSubmitting,
-            onSubmit = { stars ->
-                val id = tmdbId ?: return@RatingPickerDialog
+        StarPicker(
+            stars = rating ?: 0,
+            tint = starTint,
+            enabled = !isSubmitting,
+            isTablet = isTablet,
+            onPick = { value ->
+                val id = tmdbId ?: return@StarPicker
                 isSubmitting = true
                 scope.launch {
                     // Pessimistic: keep prior value until the POST confirms success.
-                    val ok = RatingService.submitRating(id, meta.type, stars)
+                    val ok = RatingService.submitRating(id, meta.type, value)
                     isSubmitting = false
                     if (ok) {
-                        currentRating = stars
-                        showPicker = false
+                        currentRating = value
                         NuvioToastController.show(savedText)
                     } else {
                         NuvioToastController.show(failedText)
                     }
                 }
             },
-            onDismiss = { if (!isSubmitting) showPicker = false },
-        )
-    }
-}
-
-@Composable
-@OptIn(ExperimentalMaterial3Api::class)
-private fun RatingPickerDialog(
-    currentRating: Int?,
-    isSubmitting: Boolean,
-    onSubmit: (Int) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    // Seed the picker from the existing rating, else from the picked reaction's default.
-    var selectedReaction by remember {
-        mutableStateOf(currentRating?.let { reactionForRating(it) } ?: TraktReaction.LIKE)
-    }
-    var selectedStars by remember {
-        mutableStateOf(currentRating ?: TraktReaction.LIKE.defaultRating)
-    }
-
-    BasicAlertDialog(onDismissRequest = onDismiss) {
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(20.dp),
-            color = MaterialTheme.colorScheme.surface,
-        ) {
-            Column(
-                modifier = Modifier.padding(20.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-            ) {
-                Text(
-                    text = stringResource(Res.string.settings_rating_dialog_title),
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-
-                // Step 1: pick a reaction. Selecting one snaps stars to that bucket's default.
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    ReactionChip(
-                        reaction = TraktReaction.DISLIKE,
-                        label = stringResource(Res.string.trakt_rating_dislike),
-                        selected = selectedReaction == TraktReaction.DISLIKE,
-                        onClick = {
-                            selectedReaction = TraktReaction.DISLIKE
-                            selectedStars = TraktReaction.DISLIKE.defaultRating
-                        },
-                        modifier = Modifier.weight(1f),
-                    )
-                    ReactionChip(
-                        reaction = TraktReaction.LIKE,
-                        label = stringResource(Res.string.trakt_rating_like),
-                        selected = selectedReaction == TraktReaction.LIKE,
-                        onClick = {
-                            selectedReaction = TraktReaction.LIKE
-                            selectedStars = TraktReaction.LIKE.defaultRating
-                        },
-                        modifier = Modifier.weight(1f),
-                    )
-                    ReactionChip(
-                        reaction = TraktReaction.LOVE,
-                        label = stringResource(Res.string.trakt_rating_love),
-                        selected = selectedReaction == TraktReaction.LOVE,
-                        onClick = {
-                            selectedReaction = TraktReaction.LOVE
-                            selectedStars = TraktReaction.LOVE.defaultRating
-                        },
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-
-                // Step 2: fine-tune the exact 1–10 score. Rendered as 5 stars (0.5 each),
-                // so each star is two taps (left half = odd score, full = even score).
-                StarPicker(
-                    stars = selectedStars,
-                    tint = reactionColor(selectedReaction),
-                    onPick = { value ->
-                        selectedStars = value
-                        selectedReaction = reactionForRating(value)
-                    },
-                )
-
-                Text(
-                    text = "$selectedStars/10",
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.align(Alignment.CenterHorizontally),
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    TextButton(onClick = onDismiss, enabled = !isSubmitting) {
-                        Text(stringResource(Res.string.action_cancel))
-                    }
-                    Button(
-                        onClick = { onSubmit(selectedStars) },
-                        enabled = !isSubmitting,
-                    ) {
-                        if (isSubmitting) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(18.dp),
-                                strokeWidth = 2.dp,
-                                color = MaterialTheme.colorScheme.onPrimary,
-                            )
-                        } else {
-                            Text(stringResource(Res.string.settings_rating_submit))
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ReactionChip(
-    reaction: TraktReaction,
-    label: String,
-    selected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val accent = reactionColor(reaction)
-    val container = if (selected) accent else MaterialTheme.colorScheme.surfaceVariant
-    val content = if (selected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
-    Column(
-        modifier = modifier
-            .background(container, RoundedCornerShape(14.dp))
-            .clickable(onClick = onClick)
-            .padding(vertical = 10.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        Icon(
-            imageVector = reactionIcon(reaction),
-            contentDescription = label,
-            tint = content,
-            modifier = Modifier.size(24.dp),
-        )
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelMedium,
-            color = content,
         )
     }
 }
@@ -352,10 +200,14 @@ private fun StarPicker(
     stars: Int,
     tint: Color,
     onPick: (Int) -> Unit,
+    enabled: Boolean = true,
+    isTablet: Boolean = false,
 ) {
+    val starBox = if (isTablet) 40.dp else 36.dp
+    val starIcon = if (isTablet) 38.dp else 34.dp
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+        horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.Start),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         (1..5).forEach { starIndex ->

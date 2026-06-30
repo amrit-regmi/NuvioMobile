@@ -63,6 +63,7 @@ fun DetailActionButtons(
     isTablet: Boolean = false,
     onPlayClick: () -> Unit = {},
     onPlayLongClick: (() -> Unit)? = null,
+    downloadButton: (@Composable () -> Unit)? = null,
 ) {
     val playPainter = appIconPainter(AppIconResource.PlayerPlay)
     val buttonHeight = if (isTablet) 56.dp else 52.dp
@@ -129,6 +130,13 @@ fun DetailActionButtons(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
+            }
+
+            // Persistent download button slot, placed immediately to the right of Play. The slot
+            // content renders its own leading spacer so that when the button gates itself off
+            // (already-cached title) no dangling gap remains.
+            if (downloadButton != null) {
+                downloadButton()
             }
 
             if (hasSecondaryActions) {

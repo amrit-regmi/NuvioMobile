@@ -123,25 +123,39 @@ data class StreamItem(
  */
 data class StreamInfo(
     val title: String? = null,
+    val year: Int? = null,
     val season: Int? = null,
     val episode: Int? = null,
-    /** "instant" | "cached" | "not_cached" */
+    /** "instant" | "cached" | "downloading" | "not_cached" */
     val cacheStatus: String? = null,
+    /** Resolution-derived label, e.g. "4K UHD" (kept for back-compat). */
     val quality: String? = null,
+    /** Release/source type, e.g. "BluRay", "WEB-DL", "Remux". */
+    val source: String? = null,
     val resolution: String? = null,
     val videoCodec: String? = null,
+    /** Colour depth, e.g. "10bit"/"8bit" (NOT the bitrate). */
+    val bitDepth: String? = null,
     val dynamicRange: List<String> = emptyList(),
     val audioCodec: String? = null,
     val audioChannels: String? = null,
+    /** ISO-639-1 audio language codes, e.g. ["en","es"]. */
+    val audioLanguages: List<String> = emptyList(),
+    /** ISO-639-1 subtitle language codes available for this title/episode. */
+    val subtitleLanguages: List<String> = emptyList(),
     val sizeBytes: Long? = null,
     val sizeLabel: String? = null,
     val bitrateBps: Long? = null,
     val bitrateLabel: String? = null,
+    val runtimeMinutes: Int? = null,
+    /** Pre-formatted runtime, e.g. "56m" / "1h 4m". */
+    val runtimeLabel: String? = null,
 ) {
     val cacheState: StreamCacheState?
         get() = when (cacheStatus?.trim()?.lowercase()) {
             "instant" -> StreamCacheState.INSTANT
             "cached" -> StreamCacheState.CACHED
+            "downloading" -> StreamCacheState.DOWNLOADING
             "not_cached" -> StreamCacheState.NOT_CACHED
             else -> null
         }
@@ -150,6 +164,7 @@ data class StreamInfo(
 enum class StreamCacheState(val label: String) {
     INSTANT("Instant"),
     CACHED("Cached"),
+    DOWNLOADING("Downloading"),
     NOT_CACHED("Not Cached"),
 }
 

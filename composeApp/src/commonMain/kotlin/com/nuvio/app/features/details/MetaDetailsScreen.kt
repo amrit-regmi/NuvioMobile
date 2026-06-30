@@ -72,6 +72,9 @@ import com.nuvio.app.core.ui.nuvioSafeBottomPadding
 import com.nuvio.app.features.details.components.DetailActionButtons
 import com.nuvio.app.features.details.components.DetailRatingControl
 import com.nuvio.app.features.details.components.DetailSecondaryAction
+import com.nuvio.app.features.details.components.DownloadInProgressDialog
+import com.nuvio.app.features.details.components.DownloadActionButton
+import com.nuvio.app.features.streams.DebridDownloadManager
 import com.nuvio.app.features.details.components.CommentDetailSheet
 import com.nuvio.app.features.details.components.DetailAdditionalInfoSection
 import com.nuvio.app.features.details.components.DetailCastSection
@@ -1606,45 +1609,98 @@ private fun ConfiguredMetaSections(
               androidx.compose.foundation.layout.Column(
                   verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(12.dp),
               ) {
+                // "Download to TorBox" action. The backend auto-picks the top-seeded uncached
+                // hash, so we always offer it for an imdb-id title (movie or the selected/up-next
+                // episode); the backend surfaces already_cached / no_seeders / slots_full back via
+                // DebridDownloadManager. Mirrors NuvioTV's smart-dispatch download button.
+                val isSeries = meta.type.lowercase() in setOf("series", "show", "tv", "tvshow")
+                val downloadVideoId: String? = remember(
+                    meta.id, isSeries, preferredEpisodeSeasonNumber, preferredEpisodeNumber,
+                ) {
+                    val base = meta.id.takeIf { it.startsWith("tt") } ?: return@remember null
+                    if (isSeries) {
+                        val s = preferredEpisodeSeasonNumber
+                        val e = preferredEpisodeNumber
+                        if (s != null && e != null) "$base:$s:$e" else null
+                    } else {
+                        base
+                    }
+                }
+                val downloadType = if (isSeries) "series" else "movie"
+                var pendingActiveTitle by remember(meta.id) { mutableStateOf<String?>(null) }
+
+                // Each entry is built via composable calls evaluated in this composable scope,
+                // then assembled with listOfNotNull. Download is no longer a secondary action — it
+                // is a persistent first-class circular button (see DetailActionButtons downloadButton).
+                val watchedAction = DetailSecondaryAction(
+                    label = if (isWatched) {
+                        stringResource(Res.string.hero_mark_unwatched)
+                    } else {
+                        stringResource(Res.string.hero_mark_watched)
+                    },
+                    icon = if (isWatched) {
+                        Icons.Default.CheckCircle
+                    } else {
+                        Icons.Default.CheckCircleOutline
+                    },
+                    isActive = isWatched,
+                    onClick = onWatchedClick,
+                )
+                val savedAction = DetailSecondaryAction(
+                    label = if (isSaved) {
+                        stringResource(Res.string.hero_remove_from_library)
+                    } else {
+                        stringResource(Res.string.hero_add_to_library)
+                    },
+                    icon = if (isSaved) {
+                        Icons.Default.Check
+                    } else {
+                        Icons.Default.Add
+                    },
+                    isActive = isSaved,
+                    onClick = onSaveClick,
+                    onLongClick = onSaveLongClick,
+                )
+                val secondaryActions = listOfNotNull(watchedAction, savedAction)
+
+                // Resume polling if this title is the app-scope active download (e.g. after the
+                // user navigated away and came back). No-op if already polling or not active.
+                LaunchedEffect(downloadType, downloadVideoId) {
+                    val vid = downloadVideoId ?: return@LaunchedEffect
+                    DebridDownloadManager.resumeIfActiveFor(downloadType, vid)
+                }
+
                 DetailActionButtons(
                     playLabel = playButtonLabel,
-                    secondaryActions = listOf(
-                        DetailSecondaryAction(
-                            label = if (isWatched) {
-                                stringResource(Res.string.hero_mark_unwatched)
-                            } else {
-                                stringResource(Res.string.hero_mark_watched)
-                            },
-                            icon = if (isWatched) {
-                                Icons.Default.CheckCircle
-                            } else {
-                                Icons.Default.CheckCircleOutline
-                            },
-                            isActive = isWatched,
-                            onClick = onWatchedClick,
-                        ),
-                        DetailSecondaryAction(
-                            label = if (isSaved) {
-                                stringResource(Res.string.hero_remove_from_library)
-                            } else {
-                                stringResource(Res.string.hero_add_to_library)
-                            },
-                            icon = if (isSaved) {
-                                Icons.Default.Check
-                            } else {
-                                Icons.Default.Add
-                            },
-                            isActive = isSaved,
-                            onClick = onSaveClick,
-                            onLongClick = onSaveLongClick,
-                        ),
-                    ),
+                    secondaryActions = secondaryActions,
                     isTablet = isTablet,
                     onPlayClick = onPrimaryPlayClick,
                     onPlayLongClick = if (showManualPlayOption) onPrimaryPlayLongClick else null,
+                    downloadButton = {
+                        DownloadActionButton(
+                            type = downloadType,
+                            videoId = downloadVideoId,
+                            title = meta.name,
+                            isTablet = isTablet,
+                            onRequestConfirmCancel = { activeTitle -> pendingActiveTitle = activeTitle },
+                        )
+                    },
                 )
                 // Rate-a-title control: feeds reco bootstrapping via OUR backend /ratings.
                 DetailRatingControl(meta = meta, isTablet = isTablet)
+
+                // "Download in progress" confirm dialog (mirror TV) — only when starting a new
+                // download while a DIFFERENT title is active.
+                if (pendingActiveTitle != null && downloadVideoId != null) {
+                    DownloadInProgressDialog(
+                        activeTitle = pendingActiveTitle,
+                        onConfirmCancelAndStartNew = {
+                            pendingActiveTitle = null
+                            DebridDownloadManager.start(downloadType, downloadVideoId, meta.name)
+                        },
+                        onDismiss = { pendingActiveTitle = null },
+                    )
+                }
               }
             }
             MetaScreenSectionKey.OVERVIEW -> {
