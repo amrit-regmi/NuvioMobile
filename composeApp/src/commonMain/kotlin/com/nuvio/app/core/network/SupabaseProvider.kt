@@ -9,6 +9,9 @@ import io.github.jan.supabase.functions.Functions
 import io.github.jan.supabase.postgrest.Postgrest
 import io.ktor.client.plugins.defaultRequest
 import io.ktor.http.HttpHeaders
+import kotlin.concurrent.Volatile
+import kotlinx.atomicfu.locks.SynchronizedObject
+import kotlinx.atomicfu.locks.synchronized
 
 object SupabaseProvider {
     private data class ClientHolder(
@@ -19,7 +22,7 @@ object SupabaseProvider {
     // Lock protects holder against concurrent creation from multiple Dispatchers.Default
     // coroutines all racing to call SupabaseProvider.client before the first client is stored,
     // which would cause the Supabase library to emit "SupabaseClient created!" 3+ times.
-    private val holderLock = Any()
+    private val holderLock = SynchronizedObject()
     @Volatile private var holder: ClientHolder? = null
 
     val selectedBackend: SyncBackendConfig

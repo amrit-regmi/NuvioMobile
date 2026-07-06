@@ -1,5 +1,7 @@
 package com.nuvio.app.core.network
 
+import kotlin.concurrent.Volatile
+
 /**
  * Single source of truth for our private FastAPI backend (taste-engine, served at
  * hamrocinema.regmig.com). Mirrors NuvioTV's `RecoBackend`.
