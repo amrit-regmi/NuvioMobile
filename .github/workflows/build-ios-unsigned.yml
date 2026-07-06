@@ -69,10 +69,15 @@ jobs:
           # Derive versions from the pinned submodule so this stays correct across bumps.
           MPV_TAG=$(grep -oE 'mpvkit/MPVKit/releases/download/[0-9.]+/' MPVKit/Package.swift \
                     | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-          PLACEBO_TAG=$(awk '/case .libplacebo:/{g=1;next} g&&/return "/{print;exit}' \
-                    MPVKit/Sources/BuildScripts/XCFrameworkBuild/main.swift \
-                    | grep -oE '"[^"]+"' | tr -d '"')
-          echo "MPVKit=$MPV_TAG  libplacebo=$PLACEBO_TAG"
+          # Libplacebo MUST match the ABI the prebuilt Libmpv release was linked against — NOT the
+          # version in BuildScripts/main.swift, which is the (drifted-ahead) source-build pin. The
+          # prebuilt Libmpv 0.41.0 references version-mangled libplacebo symbols (e.g.
+          # _pl_log_create_351); libplacebo mangles by PL_API_VER = the MIDDLE version component
+          # (7.<PL_API_VER>.<fix>), so it needs libplacebo 7.351.x. Using main.swift's 7.360.1
+          # (API 360) left _pl_log_create_351 undefined → "symbol(s) not found for arm64" at link.
+          # If MPV_TAG is bumped, re-derive this from the new Libmpv's `nm` pl_* symbol version.
+          PLACEBO_TAG=7.351.0
+          echo "MPVKit=$MPV_TAG  libplacebo=$PLACEBO_TAG (ABI-matched to Libmpv $MPV_TAG)"
           fetch() { echo "downloading $2"; curl -fSL --retry 3 --retry-delay 2 -o "$1" "$2"; }
           for fw in Libmpv Libavcodec Libavdevice Libavformat Libavfilter Libavutil Libswresample Libswscale; do
             fetch "$RUNNER_TEMP/$fw.zip" "https://github.com/mpvkit/MPVKit/releases/download/$MPV_TAG/$fw.xcframework.zip"
