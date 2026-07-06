@@ -117,7 +117,23 @@ jobs:
           echo "NUVIO_IOS_DISTRIBUTION=${{ env.DIST }}" >> local.properties
           # gradle.properties pins an aarch64 AAPT2 path that only exists on the dev box; drop it.
           sed -i '' '/android.aapt2FromMavenOverride/d' gradle.properties || true
+          # Right-size JVM heaps for the ~7GB macos runner. The committed values in
+          # gradle.properties (gradle 8g + kotlin daemon 6g + native 12g = 26g) are tuned for
+          # the 24GB dev box and overcommit the runner, so the Kotlin/Native compiler OOMs with
+          # "Java heap space". Disable the separate K/N compiler daemon so compilation runs
+          # in-process inside a single Gradle JVM, and cap that JVM to fit RAM. Appended keys
+          # win over the earlier definitions (last value in gradle.properties takes effect).
+          {
+            echo ''
+            echo '# --- CI heap overrides (macos runner ~7GB) ---'
+            echo 'kotlin.native.disableCompilerDaemon=true'
+            echo 'org.gradle.jvmargs=-Xmx5632M -Dfile.encoding=UTF-8 -XX:MaxMetaspaceSize=768m'
+            echo 'kotlin.daemon.jvmargs=-Xmx1024M'
+            echo 'kotlin.native.jvmArgs=-Xmx5632M'
+            echo 'org.gradle.workers.max=1'
+          } >> gradle.properties
           echo "local.properties now has $(grep -c '=' local.properties) keys; flavour=${{ env.DIST }}"
+          echo "== effective heap-related gradle.properties (last wins) =="; grep -nE 'jvmargs|jvmArgs|disableCompilerDaemon|workers.max' gradle.properties
 
       - name: Archive (unsigned)
         run: |
