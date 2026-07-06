@@ -36,12 +36,12 @@ concurrency:
 
 jobs:
   build:
-    # macos-13 is the free Intel runner with 14GB RAM (vs 7GB on the arm64
-    # macos-14/15 images). The Kotlin/Native Release compile of the shared
-    # framework needs ~10GB and OOM-killed (exit 137) on 7GB. Intel host still
-    # cross-compiles the arm64 iOS archive; MPVKit is swift-tools 5.8 so Xcode
-    # 15.2 (macos-13's latest-stable) resolves it fine.
-    runs-on: macos-13
+    # arm64 runner (7GB RAM, always available). The 14GB Intel macos-13 image is
+    # deprecated and never dequeues on free capacity, so instead of chasing more
+    # RAM we build the K/N framework in Debug config (see Archive step): its
+    # working set fits 7GB comfortably because it skips the memory-heavy release
+    # LLVM optimization that OOM-killed the Release compile here.
+    runs-on: macos-15
     env:
       DIST: ${{ inputs.distribution || 'full' }}   # 'full' on push events (no inputs)
     steps:
@@ -122,20 +122,20 @@ jobs:
           echo "NUVIO_IOS_DISTRIBUTION=${{ env.DIST }}" >> local.properties
           # gradle.properties pins an aarch64 AAPT2 path that only exists on the dev box; drop it.
           sed -i '' '/android.aapt2FromMavenOverride/d' gradle.properties || true
-          # Right-size JVM heaps for the 14GB macos-13 runner. The committed values in
+          # Right-size JVM heaps for the ~7GB arm64 runner. The committed values in
           # gradle.properties (gradle 8g + kotlin daemon 6g + native 12g = 26g) are tuned for
           # the 24GB dev box and overcommit the runner. Run the Kotlin/Native compiler
-          # in-process inside a single Gradle JVM (disable the separate compiler daemon) and
-          # give that one JVM a real 10g heap that fits 14GB with headroom for swiftc/clang/OS.
+          # in-process in a single Gradle JVM capped at 5g — ample for the Debug framework
+          # build, which (unlike Release) does not run the memory-heavy LLVM optimizer.
           # Appended keys win (last value in gradle.properties takes effect).
           {
             echo ''
-            echo '# --- CI heap overrides (macos-13 runner, 14GB) ---'
+            echo '# --- CI heap overrides (arm64 runner ~7GB, Debug framework) ---'
             echo 'kotlin.native.disableCompilerDaemon=true'
-            echo 'org.gradle.jvmargs=-Xmx10g -Dfile.encoding=UTF-8 -XX:MaxMetaspaceSize=1g'
-            echo 'kotlin.daemon.jvmargs=-Xmx2g'
-            echo 'kotlin.native.jvmArgs=-Xmx10g'
-            echo 'org.gradle.workers.max=2'
+            echo 'org.gradle.jvmargs=-Xmx5g -Dfile.encoding=UTF-8 -XX:MaxMetaspaceSize=768m'
+            echo 'kotlin.daemon.jvmargs=-Xmx1024M'
+            echo 'kotlin.native.jvmArgs=-Xmx5g'
+            echo 'org.gradle.workers.max=1'
           } >> gradle.properties
           echo "local.properties now has $(grep -c '=' local.properties) keys; flavour=${{ env.DIST }}"
           echo "== effective heap-related gradle.properties (last wins) =="; grep -nE 'jvmargs|jvmArgs|disableCompilerDaemon|workers.max' gradle.properties
@@ -143,17 +143,23 @@ jobs:
       - name: Archive (unsigned)
         run: |
           set -o pipefail
+          # Debug configuration: the Kotlin/Native Release framework compile needs >7GB and
+          # OOM-kills this runner; the Debug framework skips LLVM optimization and fits. The
+          # produced app is fully functional (larger/slower) — fine for a personal sideload.
+          # ONLY_ACTIVE_ARCH=NO so the generic iOS destination still builds device arm64.
           xcodebuild \
             -project iosApp/iosApp.xcodeproj \
             -scheme iosApp \
-            -configuration Release \
+            -configuration Debug \
             -destination 'generic/platform=iOS' \
             -archivePath "$RUNNER_TEMP/Nuvio.xcarchive" \
             archive \
+            ONLY_ACTIVE_ARCH=NO \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM="" \
             | xcpretty || xcodebuild \
-            -project iosApp/iosApp.xcodeproj -scheme iosApp -configuration Release \
+            -project iosApp/iosApp.xcodeproj -scheme iosApp -configuration Debug \
             -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/Nuvio.xcarchive" archive \
+            ONLY_ACTIVE_ARCH=NO \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM=""
 
       - name: Package unsigned .ipa (widget stripped)
