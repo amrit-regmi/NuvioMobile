@@ -28,7 +28,7 @@ import kotlinx.coroutines.withTimeoutOrNull
  * "could not open link" timeouts the mobile app had.
  *
  * Best-effort by design:
- *  - runs on [Dispatchers.IO]; never blocks the UI
+ *  - runs on [Dispatchers.Default] (multiplatform; IO is JVM-only); never blocks the UI
  *  - cancellation-safe (re-throws CancellationException, swallows everything else)
  *  - deduped per (type|videoId) so re-composition / quick re-opens don't double-fetch
  *  - bounded to the top [MAX_WARM_CANDIDATES] candidates so warm creates at most a couple of
@@ -38,7 +38,7 @@ import kotlinx.coroutines.withTimeoutOrNull
  */
 object StreamWarmer {
     private val log = Logger.withTag("StreamWarmer")
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     /** Cap on candidates resolved per warm (limits TorBox round-trips). */
     private const val MAX_WARM_CANDIDATES = 2

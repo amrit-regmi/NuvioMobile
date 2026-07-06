@@ -38,7 +38,7 @@ import kotlinx.coroutines.sync.withLock
  */
 object CatalogPrewarmService {
     private val log = Logger.withTag("CatalogPrewarm")
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val mutex = Mutex()
 
     /** Dedup guard: prewarm keys (type/video_id) currently in flight. */
