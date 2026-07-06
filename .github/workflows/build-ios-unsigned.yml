@@ -40,10 +40,18 @@ jobs:
     env:
       DIST: ${{ inputs.distribution || 'full' }}   # 'full' on push events (no inputs)
     steps:
-      - name: Checkout (with MPVKit submodule)
+      - name: Checkout
         uses: actions/checkout@v4
         with:
-          submodules: recursive   # MPVKit is a local Swift package submodule — required
+          submodules: false   # NOT recursive: the tree has orphaned gitlinks
+                              # (libass-android, vendor/*) with no .gitmodules url that
+                              # break recursive init and are irrelevant to iOS.
+
+      - name: Init MPVKit submodule only
+        run: |
+          # Only MPVKit is defined in .gitmodules and needed by the iOS build.
+          git submodule update --init --force --depth=1 MPVKit
+          ls -la MPVKit | head -5
 
       - name: Read version from Version.xcconfig
         id: ver
