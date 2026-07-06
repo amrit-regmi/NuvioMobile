@@ -53,6 +53,33 @@ jobs:
           git submodule update --init --force --depth=1 MPVKit
           ls -la MPVKit | head -5
 
+      - name: Materialize MPVKit prebuilt xcframeworks
+        run: |
+          set -euo pipefail
+          # MPVKit/dist is gitignored, so the non-GPL binary targets the app links
+          # (Lib{mpv,av*,sw*} + Libplacebo) are absent from the checkout. Download the
+          # matching prebuilt xcframeworks instead of compiling from source (make build).
+          XCF="MPVKit/dist/release/xcframework"
+          mkdir -p "$XCF"
+          # Derive versions from the pinned submodule so this stays correct across bumps.
+          MPV_TAG=$(grep -oE 'mpvkit/MPVKit/releases/download/[0-9.]+/' MPVKit/Package.swift \
+                    | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+          PLACEBO_TAG=$(awk '/case .libplacebo:/{g=1;next} g&&/return "/{print;exit}' \
+                    MPVKit/Sources/BuildScripts/XCFrameworkBuild/main.swift \
+                    | grep -oE '"[^"]+"' | tr -d '"')
+          echo "MPVKit=$MPV_TAG  libplacebo=$PLACEBO_TAG"
+          fetch() { echo "downloading $2"; curl -fSL --retry 3 --retry-delay 2 -o "$1" "$2"; }
+          for fw in Libmpv Libavcodec Libavdevice Libavformat Libavfilter Libavutil Libswresample Libswscale; do
+            fetch "$RUNNER_TEMP/$fw.zip" "https://github.com/mpvkit/MPVKit/releases/download/$MPV_TAG/$fw.xcframework.zip"
+            unzip -oq "$RUNNER_TEMP/$fw.zip" -d "$XCF"
+          done
+          fetch "$RUNNER_TEMP/Libplacebo.zip" "https://github.com/mpvkit/libplacebo-build/releases/download/$PLACEBO_TAG/Libplacebo.xcframework.zip"
+          unzip -oq "$RUNNER_TEMP/Libplacebo.zip" -d "$XCF"
+          echo "== xcframeworks present =="; ls -1 "$XCF"
+          for fw in Libmpv Libavcodec Libavdevice Libavformat Libavfilter Libavutil Libswresample Libswscale Libplacebo; do
+            test -d "$XCF/$fw.xcframework" || { echo "::error::missing $fw.xcframework"; exit 1; }
+          done
+
       - name: Read version from Version.xcconfig
         id: ver
         run: |
