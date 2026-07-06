@@ -34,7 +34,7 @@ import kotlinx.coroutines.launch
  */
 object DebridDownloadManager {
     private val log = Logger.withTag("DebridDownloadManager")
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     private const val POLL_INTERVAL_MS = 4_000L
     private const val MAX_POLL_DURATION_MS = 30L * 60L * 1_000L // 30 minutes
