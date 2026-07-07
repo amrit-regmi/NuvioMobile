@@ -177,6 +177,18 @@ jobs:
           cp -R "$APP" "$WORK/Payload/"
           # Strip app extensions (Downloads widget / Live Activity) — unsignable on a free Apple ID.
           rm -rf "$WORK/Payload/"*.app/PlugIns "$WORK/Payload/"*.app/Watch 2>/dev/null || true
+          # Strip the Kotlin/Native + Swift main executable. We archive in Debug config (Release
+          # K/N OOM-kills the 7GB runner), so the binary ships ~190MB of debug + local symbols it
+          # never needs at runtime. `strip -S -x` drops debug + local symbols from the
+          # self-contained main executable (it still launches; Swift reflection lives in separate
+          # __swift5_* sections that strip does not touch). Frameworks are prebuilt release
+          # xcframeworks — already lean — so we leave them untouched.
+          APPNAME=$(basename "$(ls -d "$WORK/Payload/"*.app | head -1)")
+          EXE=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$WORK/Payload/$APPNAME/Info.plist")
+          BIN="$WORK/Payload/$APPNAME/$EXE"
+          echo "main binary before strip: $(du -h "$BIN" | cut -f1)"
+          xcrun strip -S -x "$BIN"
+          echo "main binary after  strip: $(du -h "$BIN" | cut -f1)"
           OUT="CineX-ios-v${{ steps.ver.outputs.version }}-${{ env.DIST }}-unsigned.ipa"
           ( cd "$WORK" && zip -qry "$RUNNER_TEMP/$OUT" Payload )
           ls -lh "$RUNNER_TEMP/$OUT"
