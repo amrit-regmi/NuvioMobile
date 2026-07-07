@@ -16,12 +16,18 @@ RUN url=$(curl -fsSL https://api.github.com/repos/NyaMisty/AltServer-Linux/relea
     && chmod +x /usr/local/bin/AltServer
 
 # netmuxd (jkcoxson) — registers the USB device (seen via the bind-mounted usbmuxd
-# socket) so AltServer can reach it. Pick the x86_64 linux asset.
+# socket) so AltServer can reach it. Assets are now .tar.gz per target triple; grab the
+# x86_64 GNU/Linux tarball SPECIFICALLY (the loose 'x86_64' glob also matched the macOS
+# and Windows builds → wrong-arch "Exec format error") and extract the binary out of it.
 RUN url=$(curl -fsSL https://api.github.com/repos/jkcoxson/netmuxd/releases/latest \
-          | jq -r '.assets[].browser_download_url' | grep -iE 'x86_64.*linux.*netmuxd$|netmuxd.*x86_64' | head -1) \
+          | jq -r '.assets[].browser_download_url' \
+          | grep -iE 'x86_64-unknown-linux-gnu\.tar\.gz$' | head -1) \
     && echo "netmuxd: $url" \
-    && curl -fSL -o /usr/local/bin/netmuxd "$url" \
-    && chmod +x /usr/local/bin/netmuxd
+    && curl -fSL -o /tmp/netmuxd.tar.gz "$url" \
+    && tar -xzf /tmp/netmuxd.tar.gz -C /tmp \
+    && install -m 0755 "$(find /tmp -type f -name netmuxd | head -1)" /usr/local/bin/netmuxd \
+    && rm -rf /tmp/netmuxd.tar.gz \
+    && /usr/local/bin/netmuxd --help >/dev/null 2>&1 || true
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
