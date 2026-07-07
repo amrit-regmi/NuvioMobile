@@ -1,0 +1,44 @@
+# iOS sideload stack for the Debian home server (192.168.10.128) — "option A".
+#
+# Host provides exactly ONE package: usbmuxd (apt). It owns the USB link to the
+# tethered iPhone and survives replug/reboot. Everything else lives here, in
+# Docker, and is fully described by this file:
+#   - anisette : Apple auth-data provider (dadoum/anisette-v3-server) on :6969
+#   - altserver: AltServer-Linux + netmuxd — installs the AltStore app onto the phone
+#                and keeps running so AltStore can install/refresh CineX + OTHER apps
+#                wirelessly (and self-refreshes AltStore before the 7-day cert lapses).
+#
+# Manage it like any compose stack:  up -d / logs -f / pull / down.
+# The Apple ID password lives ONLY in ./secrets/altserver.env (chmod 600, git-ignored,
+# YOU create it). It is never baked into an image or committed.
+
+services:
+  anisette:
+    image: dadoum/anisette-v3-server:latest
+    container_name: anisette
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6969:6969"          # loopback-only; altserver reaches it via host net
+    volumes:
+      - anisette-data:/home/Alcoholic/.config/anisette-v3/lib/
+
+  altserver:
+    build: ./altserver
+    container_name: altserver
+    restart: unless-stopped
+    depends_on: [anisette]
+    network_mode: host                 # so it can hit 127.0.0.1:6969 + Apple servers directly
+    env_file:
+      - ./secrets/altserver.env        # APPLE_ID, APPLE_ID_PASSWORD  (you create this)
+    environment:
+      ALTSERVER_ANISETTE_SERVER: "http://127.0.0.1:6969"
+      REFRESH_INTERVAL_DAYS: "6"       # re-sign before the 7-day free-cert expiry
+    volumes:
+      - /var/run/usbmuxd:/var/run/usbmuxd     # talk to the iPhone through host usbmuxd
+      - /var/lib/lockdown:/var/lib/lockdown   # USB pairing records (host-owned)
+      - ./ipa:/ipa:ro                          # the unsigned .ipa to install/refresh
+      - altserver-data:/root                   # persists the Apple session so 2FA isn't re-asked
+
+volumes:
+  anisette-data:
+  altserver-data:
