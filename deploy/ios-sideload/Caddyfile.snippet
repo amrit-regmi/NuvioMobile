@@ -1,0 +1,33 @@
+# Serve the self-hosted CineX AltStore source from your EXISTING Caddy.
+# gen-source.py writes deploy/ios-sideload/web/{apps.json,icon.png,CineX.ipa}.
+# Point Caddy at that dir with ONE of the blocks below, then set SOURCE_BASE_URL to
+# match the address the PHONE will use, and (re)run gen-source.py so the URLs in
+# apps.json line up. Reload Caddy: `caddy reload` (or `systemctl reload caddy`).
+
+# ---- Option A: dedicated LAN port (simplest; phone must be on the LAN) ----
+# SOURCE_BASE_URL=http://192.168.10.128:8843
+:8843 {
+	root * /path/to/NuvioMobile/deploy/ios-sideload/web
+	file_server
+}
+
+# ---- Option B: path under an existing site (reuses your TLS/domain) ----
+# SOURCE_BASE_URL=https://hamrocinema.regmig.com/cinex-ios
+# Add INSIDE your existing `hamrocinema.regmig.com { ... }` block:
+#	handle_path /cinex-ios/* {
+#		root * /path/to/NuvioMobile/deploy/ios-sideload/web
+#		file_server
+#	}
+
+# ---- Option C: dedicated subdomain (clean https URL for the source) ----
+# SOURCE_BASE_URL=https://ios.hamrocinema.regmig.com
+# ios.hamrocinema.regmig.com {
+#	root * /path/to/NuvioMobile/deploy/ios-sideload/web
+#	file_server
+# }
+
+# Notes:
+# - AltStore accepts plain http sources on a LAN; https (B/C) is nicer and works anywhere.
+# - The .ipa is ~50-190 MB — make sure any upstream body/size limits allow it.
+# - After every new CI build: re-run bootstrap.sh (pulls new .ipa + regenerates web/);
+#   AltStore then offers the update OTA. No Caddy change needed on updates.

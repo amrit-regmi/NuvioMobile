@@ -1,0 +1,5 @@
+# Never let credentials or the binary leave the box.
+secrets/
+ipa/
+*.ipa
+web/          # generated AltStore source (apps.json + icon.png + CineX.ipa)
