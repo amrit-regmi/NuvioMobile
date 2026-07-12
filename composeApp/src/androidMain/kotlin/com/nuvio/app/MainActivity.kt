@@ -31,6 +31,7 @@ import com.nuvio.app.features.player.PlayerTrackPreferenceStorage
 import com.nuvio.app.features.player.ExternalPlayerPlatform
 import com.nuvio.app.features.player.SubtitleFileCache
 import com.nuvio.app.features.player.PlayerPictureInPictureManager
+import com.nuvio.app.features.player.PipRemoteActionReceiver
 import com.nuvio.app.features.p2p.P2pSettingsStorage
 import com.nuvio.app.features.p2p.P2pStreamingEngine
 import com.nuvio.app.features.plugins.PluginStorage
@@ -57,6 +58,8 @@ import com.nuvio.app.features.watchprogress.ResumePromptStorage
 import com.nuvio.app.features.watchprogress.WatchProgressStorage
 
 class MainActivity : AppCompatActivity() {
+    private var pipRemoteActionReceiver: PipRemoteActionReceiver? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         // Remove the OS splash the instant the first Compose frame is ready so the static splash
         // window never lingers — the animated CineXSplash takes over immediately.
@@ -69,6 +72,7 @@ class MainActivity : AppCompatActivity() {
         ThemeSettingsStorage.initialize(applicationContext)
         super.onCreate(savedInstanceState)
         window.setBackgroundDrawableResource(R.color.nuvio_background)
+        pipRemoteActionReceiver = PipRemoteActionReceiver.register(this)
         AddonStorage.initialize(applicationContext)
         // Private-backend fork: resolve our FastAPI base URL (default + any persisted
         // user override) once at startup, before any content client is built.
@@ -147,6 +151,11 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         EpisodeReleaseNotificationPlatform.unbindActivity(this)
+        val receiver = pipRemoteActionReceiver
+        if (receiver != null) {
+            runCatching { unregisterReceiver(receiver) }
+            pipRemoteActionReceiver = null
+        }
         super.onDestroy()
     }
 
