@@ -28,6 +28,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -51,7 +52,11 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.nuvio.app.core.format.formatReleaseDateForDisplay
+import com.nuvio.app.core.ui.AggregatedRatingsRow
+import com.nuvio.app.core.ui.unifyAggregatedRatings
+import com.nuvio.app.features.details.MetaExternalRating
 import com.nuvio.app.features.home.MetaPreview
+import com.nuvio.app.features.home.stableKey
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import nuvio.composeapp.generated.resources.*
@@ -90,6 +95,8 @@ fun HomeHeroSection(
     mobileBelowSectionHeightHint: Dp? = null,
     listState: LazyListState? = null,
     onItemClick: ((MetaPreview) -> Unit)? = null,
+    ratingsByKey: Map<String, List<MetaExternalRating>> = emptyMap(),
+    onRequestRatings: ((MetaPreview) -> Unit)? = null,
 ) {
     if (items.isEmpty()) return
 
@@ -149,6 +156,12 @@ fun HomeHeroSection(
             ?.page
             ?.let(items::get)
             ?: items[currentPage]
+
+        // Fetch aggregated ratings for the active hero item (and prefetch its neighbours so a
+        // swipe lands on already-resolved ratings). Cheap + deduped by the repository.
+        LaunchedEffect(currentItem.stableKey(), onRequestRatings) {
+            onRequestRatings?.invoke(currentItem)
+        }
 
         Box(
             modifier = Modifier
@@ -243,6 +256,7 @@ fun HomeHeroSection(
                                     item = items[layer.page],
                                     layout = layout,
                                     onItemClick = onItemClick,
+                                    ratings = ratingsByKey[items[layer.page].stableKey()],
                                 )
                             }
                         }
@@ -348,11 +362,22 @@ private fun HeroContentBlock(
     item: MetaPreview,
     layout: HomeHeroLayout,
     onItemClick: ((MetaPreview) -> Unit)?,
+    ratings: List<MetaExternalRating>? = null,
 ) {
     var logoLoadError by remember(item.type, item.id, item.logo) {
         mutableStateOf(false)
     }
     val logoUrl = item.logo?.takeIf { it.isNotBlank() }
+
+    // Same unification rule as the details screen (DetailMetaInfo): fold the inline imdbRating
+    // into the aggregated set, dedupe on imdb, then a SINGLE rating renders inline on the meta
+    // row and TWO OR MORE get their own row. The aggregated set arrives asynchronously — until it
+    // does we still surface the inline imdb value from the catalog payload.
+    val unifiedRatings = remember(ratings, item.imdbRating) {
+        unifyAggregatedRatings(ratings.orEmpty(), item.imdbRating)
+    }
+    val showRatingsInline = unifiedRatings.size == 1
+    val showRatingsOwnRow = unifiedRatings.size >= 2
 
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -412,6 +437,20 @@ private fun HeroContentBlock(
                 HeroMetaDot()
                 HeroMetaText(text = formatReleaseDateForDisplay(info))
             }
+            // Single rating → inline on the type/genre/year row (matches DetailMetaInfo).
+            if (showRatingsInline) {
+                HeroMetaDot()
+                AggregatedRatingsRow(ratings = unifiedRatings, ownRow = false)
+            }
+        }
+
+        // Two or more ratings → their own row directly below (matches DetailMetaInfo).
+        if (showRatingsOwnRow) {
+            Spacer(modifier = Modifier.height(10.dp))
+            AggregatedRatingsRow(
+                ratings = unifiedRatings,
+                modifier = if (layout.isTablet) Modifier else Modifier.fillMaxWidth(),
+            )
         }
     }
 }

@@ -12,6 +12,9 @@ import com.nuvio.app.features.collection.CollectionSource
 import com.nuvio.app.features.collection.TmdbCollectionSourceResolver
 import com.nuvio.app.features.collection.catalogRouteKey
 import com.nuvio.app.features.collection.findCollectionCatalog
+import com.nuvio.app.features.details.MetaExternalRating
+import com.nuvio.app.features.mdblist.MdbListMetadataService
+import com.nuvio.app.features.mdblist.MdbListSettingsRepository
 import com.nuvio.app.features.trakt.TraktPublicListSourceResolver
 import com.nuvio.app.features.watchprogress.CurrentDateProvider
 import kotlinx.coroutines.CoroutineScope
@@ -23,6 +26,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.getAndUpdate
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlin.math.absoluteValue
@@ -33,6 +37,16 @@ object HomeRepository {
     private val log = Logger.withTag("HomeRepository")
     private val _uiState = MutableStateFlow(HomeUiState())
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
+
+    // Aggregated ratings for hero items, keyed by MetaPreview.stableKey(). Fetched lazily when a
+    // hero item becomes the active page (see requestHeroRatings) so the hero can render the SAME
+    // aggregated rating set as the details screen. Backed by MdbListMetadataService's own request
+    // cache, so opening the item's details later is free (and vice-versa).
+    private val _heroRatings = MutableStateFlow<Map<String, List<MetaExternalRating>>>(emptyMap())
+    val heroRatings: StateFlow<Map<String, List<MetaExternalRating>>> = _heroRatings.asStateFlow()
+    // Guards against duplicate concurrent fetches for the same hero item. StateFlow.getAndUpdate
+    // gives an atomic check-and-add without a JVM-only `synchronized` block (commonMain-safe).
+    private val heroRatingsInFlight = MutableStateFlow<Set<String>>(emptySet())
 
     private var activeJob: Job? = null
     private var recoJob: Job? = null
@@ -221,6 +235,30 @@ object HomeRepository {
         )
     }
 
+    /**
+     * Lazily fetches the aggregated rating set for a hero [item] (the active pager page) and stores
+     * it in [heroRatings] keyed by the item's stable key. No-op when ratings are already present,
+     * a fetch is in flight, MDBList is disabled, or the item has no imdb id. Failures are swallowed
+     * (the hero simply keeps showing the inline imdb value / nothing).
+     */
+    fun requestHeroRatings(item: MetaPreview) {
+        val key = item.stableKey()
+        if (_heroRatings.value.containsKey(key)) return
+        val prior = heroRatingsInFlight.getAndUpdate { it + key }
+        if (prior.contains(key)) return
+        scope.launch {
+            val ratings = runCatching {
+                MdbListMetadataService.fetchAggregatedRatings(
+                    rawItemId = item.id,
+                    metaType = item.type,
+                    settings = MdbListSettingsRepository.snapshot(),
+                )
+            }.getOrDefault(emptyList())
+            _heroRatings.update { current -> current + (key to ratings) }
+            heroRatingsInFlight.update { it - key }
+        }
+    }
+
     fun clear() {
         activeJob?.cancel()
         activeJob = null
@@ -238,6 +276,8 @@ object HomeRepository {
         collectionHeroRequestKey = null
         lastPublishedCatalogHeroEmpty = true
         lastErrorMessage = null
+        _heroRatings.value = emptyMap()
+        heroRatingsInFlight.value = emptySet()
         _uiState.value = HomeUiState()
     }
 

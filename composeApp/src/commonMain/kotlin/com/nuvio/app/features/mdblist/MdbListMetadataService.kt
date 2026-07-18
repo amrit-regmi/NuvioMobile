@@ -80,6 +80,32 @@ object MdbListMetadataService {
         ratingsCache.clear()
     }
 
+    /**
+     * Fetches the full aggregated rating set for a raw meta [rawItemId] (may be a bare `tt…` id,
+     * a `tmdb:…` id that embeds one, etc.) of [metaType] (movie|series). Reuses the SAME MDBList
+     * request path + in-memory cache the details screen uses, so calling this for a home-hero item
+     * that the user later opens costs nothing on the details side (and vice-versa). Returns an
+     * empty list when MDBList is disabled, has no key, or no imdb id can be resolved.
+     */
+    suspend fun fetchAggregatedRatings(
+        rawItemId: String?,
+        metaType: String,
+        settings: MdbListSettings,
+    ): List<MetaExternalRating> {
+        if (!settings.enabled) return emptyList()
+        val apiKey = settings.apiKey.trim()
+        if (apiKey.isBlank()) return emptyList()
+        val providers = settings.enabledProvidersInPriorityOrder()
+        if (providers.isEmpty()) return emptyList()
+        val imdbId = extractImdbId(rawItemId) ?: return emptyList()
+        return fetchRatings(
+            imdbId = imdbId,
+            mediaType = toMdbListMediaType(metaType),
+            apiKey = apiKey,
+            providers = providers,
+        )
+    }
+
     private suspend fun fetchRatings(
         imdbId: String,
         mediaType: String,

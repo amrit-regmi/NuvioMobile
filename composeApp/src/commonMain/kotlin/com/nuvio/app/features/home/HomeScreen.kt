@@ -122,6 +122,7 @@ fun HomeScreen(
     val contentAddons by com.nuvio.app.core.content.ContentSourceProvider
         .contentAddonsFlow.collectAsStateWithLifecycle()
     val homeUiState by HomeRepository.uiState.collectAsStateWithLifecycle()
+    val heroRatings by HomeRepository.heroRatings.collectAsStateWithLifecycle()
     val homeSettingsUiState by remember {
         HomeCatalogSettingsRepository.snapshot()
         HomeCatalogSettingsRepository.uiState
@@ -757,6 +758,8 @@ fun HomeScreen(
                             mobileBelowSectionHeightHint = mobileHeroBelowSectionHeightHint,
                             listState = homeListState,
                             onItemClick = onPosterClick,
+                            ratingsByKey = heroRatings,
+                            onRequestRatings = { HomeRepository.requestHeroRatings(it) },
                         )
 
                         else -> HomeHeroReservedSpace(
