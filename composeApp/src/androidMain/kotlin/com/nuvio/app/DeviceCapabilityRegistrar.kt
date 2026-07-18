@@ -55,15 +55,18 @@ object DeviceCapabilityRegistrar {
         val userId = authState.userId
         val deviceId = deriveDeviceId(context)
         val decode = detectDecodeCaps()
-        val maxResolution = detectMaxResolution(context, decode)
+        val maxResolution = detectMaxResolution(decode)
         val hdrTypes = detectHdrTypes(context, decode)
         val codecs = detectCodecs()
         val formFactor = detectFormFactor(context)
         val appVersion = detectAppVersion(context)
-        // Bound stream size so the backend never returns a remux this device can't comfortably
-        // stream. Derived from the (decode-capped) resolution since we don't yet measure bandwidth.
+        // Bound stream size so the backend never returns a file this device can't comfortably
+        // stream. 2160p is capped well below full-remux size on purpose: a device with a sub-4K
+        // panel (e.g. a tablet) benefits from a proper 4K *encode* (~4-20GB) downscaled to its
+        // panel, but a 40-80GB 4K REMUX would buffer on mobile single-connection playback (see the
+        // far-CDN/single-conn buffering history) and offers no visible gain on a 1080p-class panel.
         val maxSizeGb = when (maxResolution) {
-            "2160p" -> 45
+            "2160p" -> 25
             "1080p" -> 15
             else -> 5
         }
@@ -202,14 +205,16 @@ object DeviceCapabilityRegistrar {
         return DecodeCaps(maxHeight, hevcHdr10, hevc10, dv)
     }
 
-    private fun detectMaxResolution(context: Context, decode: DecodeCaps): String {
-        val dm = context.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager
-        val display = dm?.getDisplay(android.view.Display.DEFAULT_DISPLAY)
-        val panelHeight = display?.supportedModes?.maxOfOrNull { it.physicalHeight } ?: 1080
-        // Effective height = min(what the panel shows, what the decoder can decode). Never report
-        // below 1080p (avoids under-serving when a decoder probe comes back unexpectedly low).
-        val decodeHeight = if (decode.maxHeight > 0) decode.maxHeight else Int.MAX_VALUE
-        val effective = maxOf(minOf(panelHeight, decodeHeight), 1080)
+    private fun detectMaxResolution(decode: DecodeCaps): String {
+        // Cap by what the hardware can DECODE, NOT by the panel resolution. A device with a sub-4K
+        // panel (e.g. a Galaxy Tab S6 Lite: ~1200p panel, but its decoder handles 4K HEVC) can still
+        // decode a 2160p source and downscale it — and a high-bitrate 4K encode downscaled to the
+        // panel looks better than a native 1080p one. The decoder limit is the real black-screen
+        // guard (a source the decoder can't handle); the panel is not. HDR is still gated separately
+        // by decode caps in detectHdrTypes, and stream size is bounded by maxSizeGb above. Never
+        // report below 1080p (avoids under-serving when a decoder probe comes back unexpectedly low).
+        val decodeHeight = if (decode.maxHeight > 0) decode.maxHeight else 1080
+        val effective = maxOf(decodeHeight, 1080)
         return when {
             effective >= 2160 -> "2160p"
             effective >= 1080 -> "1080p"
