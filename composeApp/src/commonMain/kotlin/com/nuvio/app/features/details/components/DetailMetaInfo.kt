@@ -81,13 +81,33 @@ fun DetailMetaInfo(
         val releaseLine = formatMetaReleaseLineForDetails(meta)
         val runtimeText = formatRuntimeForDisplay(meta.runtime)
         val ageBadge = meta.ageRating?.trim()?.takeIf { it.isNotBlank() }
-        val hasMdbImdbRating = meta.externalRatings.any { it.source == PROVIDER_IMDB }
-        val validImdbRating = meta.imdbRating
-            ?.takeIf { raw -> raw.toDoubleOrNull()?.let { it > 0.0 } == true }
+
+        // Unify ALL ratings into one deduped set, mirroring NuvioTV's HeroSection. Fold the
+        // inline meta.imdbRating into the aggregated (/catalog-addon/ratings → externalRatings)
+        // set, but never duplicate imdb: prefer the aggregated imdb value when present, else
+        // fall back to the meta value. Placement rule: a SINGLE rating stays inline on the
+        // genre/year row; TWO OR MORE ratings get their own row directly below it.
+        val unifiedRatings = remember(meta.externalRatings, meta.imdbRating) {
+            val hasAggregatedImdb = meta.externalRatings.any { it.source == PROVIDER_IMDB }
+            val metaImdbValue = meta.imdbRating
+                ?.toDoubleOrNull()
+                ?.takeIf { it > 0.0 }
+            if (!hasAggregatedImdb && metaImdbValue != null) {
+                // No aggregated imdb → surface the meta imdb as an imdb rating so it dedupes
+                // and participates in the ≥2-own-row / 1-inline placement rule.
+                listOf(MetaExternalRating(source = PROVIDER_IMDB, value = metaImdbValue)) +
+                    meta.externalRatings
+            } else {
+                meta.externalRatings
+            }
+        }
+        val showRatingsInline = unifiedRatings.size == 1
+        val showRatingsOwnRow = unifiedRatings.size >= 2
+
         val hasMetaRow = releaseLine != null ||
             runtimeText != null ||
             ageBadge != null ||
-            (validImdbRating != null && !hasMdbImdbRating)
+            showRatingsInline
         if (hasMetaRow) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -112,36 +132,21 @@ fun DetailMetaInfo(
                 ageBadge?.let { badge ->
                     DetailHeroMetaBadge(text = badge)
                 }
-                if (validImdbRating != null && !hasMdbImdbRating) {
-                    val imdbTextStyle = MaterialTheme.typography.titleMedium.copy(
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.sp,
-                    )
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        ImdbRatingSourceLabel(
-                            storeTextStyle = imdbTextStyle,
-                            storeTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Spacer(modifier = Modifier.width(5.dp))
-                        Text(
-                            text = validImdbRating,
-                            style = imdbTextStyle,
-                            color = ImdbYellow,
-                        )
-                    }
+                // Single rating → inline on the genre/year row.
+                if (showRatingsInline) {
+                    DetailRatingsRow(ratings = unifiedRatings, ownRow = false)
                 }
             }
         }
 
+        // Two or more ratings → their OWN row, directly below the genre/year row.
         AnimatedVisibility(
-            visible = meta.externalRatings.isNotEmpty(),
+            visible = showRatingsOwnRow,
             enter = fadeIn() + expandVertically(),
             exit = fadeOut() + shrinkVertically(),
         ) {
             DetailRatingsRow(
-                ratings = meta.externalRatings,
+                ratings = unifiedRatings,
             )
         }
 
@@ -199,6 +204,7 @@ fun DetailMetaInfo(
 @Composable
 private fun DetailRatingsRow(
     ratings: List<MetaExternalRating>,
+    ownRow: Boolean = true,
 ) {
     val orderedRatings = remember(ratings) {
         val bySource = ratings.associateBy { it.source }
@@ -209,10 +215,19 @@ private fun DetailRatingsRow(
 
     if (orderedRatings.isEmpty()) return
 
-    Row(
-        modifier = Modifier
+    // When it owns a row it fills width and horizontally scrolls (many badges); when it
+    // renders inline on the genre/year row it must wrap its content so it doesn't consume
+    // the whole remaining row width.
+    val rowModifier = if (ownRow) {
+        Modifier
             .fillMaxWidth()
-            .horizontalScroll(rememberScrollState()),
+            .horizontalScroll(rememberScrollState())
+    } else {
+        Modifier
+    }
+
+    Row(
+        modifier = rowModifier,
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {

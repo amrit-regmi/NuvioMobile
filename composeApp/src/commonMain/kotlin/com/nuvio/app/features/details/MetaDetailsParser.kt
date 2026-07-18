@@ -44,7 +44,11 @@ internal object MetaDetailsParser {
             lastAirDate = meta.string("lastAirDate"),
             status = meta.string("status"),
             imdbRating = meta.string("imdbRating"),
-            ageRating = meta.string("ageRating"),
+            // Age certificate. Backend now serves it as app_extras.certification (with a
+            // top-level `certification` mirror); keep the legacy `ageRating` field last.
+            // Precedence matches NuvioTV's MetaMapper: app_extras.certification, then the
+            // top-level certification, then the legacy ageRating field.
+            ageRating = meta.ageRating(),
             runtime = meta.string("runtime"),
             genres = meta.stringList("genres"),
             director = meta.directors(links),
@@ -106,6 +110,20 @@ internal object MetaDetailsParser {
 
     private fun JsonObject.behaviorHints(): JsonObject =
         this["behaviorHints"] as? JsonObject ?: JsonObject(emptyMap())
+
+    /**
+     * Age certificate. Prefers `app_extras.certification`, then the top-level
+     * `certification` mirror, then the legacy `ageRating` field — matching NuvioTV's
+     * `MetaMapper.ageRating = appExtras?.certification ?: certification`.
+     */
+    private fun JsonObject.ageRating(): String? {
+        val appExtras = this["app_extras"] as? JsonObject
+        return (appExtras?.string("certification")
+            ?: string("certification")
+            ?: string("ageRating"))
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+    }
 
     private fun JsonObject.extractMetaObject(): JsonObject? {
         val data = this["data"].asJsonObjectOrNull()
