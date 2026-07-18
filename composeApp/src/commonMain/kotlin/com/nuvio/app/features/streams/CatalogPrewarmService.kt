@@ -60,6 +60,14 @@ object CatalogPrewarmService {
     private val _cacheHints = MutableStateFlow<Map<String, Boolean>>(emptyMap())
     val cacheHints: StateFlow<Map<String, Boolean>> = _cacheHints.asStateFlow()
 
+    // Whether the title has ANY stream at all (cached or not). Separate from [cacheHints]
+    // (which is cached-vs-not): a title with zero streams has nothing to download, so the
+    // detail Download button must hide even though it is technically "not cached".
+    // Absent key OR true → assume streams may exist (fail-open, never over-hide); only an
+    // explicit false hides the button.
+    private val _streamPresence = MutableStateFlow<Map<String, Boolean>>(emptyMap())
+    val streamPresence: StateFlow<Map<String, Boolean>> = _streamPresence.asStateFlow()
+
     /** Build the [cacheHints] map key for a (type, videoId) pair. */
     fun cacheHintKey(type: String, videoId: String): String = "$type/$videoId"
 
@@ -70,6 +78,10 @@ object CatalogPrewarmService {
     fun markCached(type: String, videoId: String) {
         _cacheHints.update { it + (cacheHintKey(type, videoId) to true) }
     }
+
+    /** Read the stream-presence hint. Defaults to true (fail-open) when unknown. */
+    fun hasStreams(type: String, videoId: String): Boolean =
+        _streamPresence.value[cacheHintKey(type, videoId)] != false
 
     private fun isAuthenticated(): Boolean {
         val state = AuthRepository.state.value
@@ -110,6 +122,10 @@ object CatalogPrewarmService {
                 // Record the cache hint so the detail-screen Download button can gate itself:
                 // warmed → a cached/playable stream exists (hide Download); else not cached (offer it).
                 _cacheHints.update { it + (key to warmed) }
+                // Record whether the title has ANY stream at all. Backend sends has_streams:false
+                // only when zero streams exist; treat missing/true as "streams may exist" (fail-open).
+                val hasStreams = !body.contains("\"has_streams\":false")
+                _streamPresence.update { it + (key to hasStreams) }
                 _completions.tryEmit(
                     PrewarmCompletion(
                         type = normalizedType,

@@ -72,23 +72,33 @@ fun DownloadActionButton(
     val progress by DebridDownloadManager.progress.collectAsStateWithLifecycle()
     val activePrepare by DebridDownloadManager.activePrepare.collectAsStateWithLifecycle()
     val cacheHints by CatalogPrewarmService.cacheHints.collectAsStateWithLifecycle()
+    val streamPresence by CatalogPrewarmService.streamPresence.collectAsStateWithLifecycle()
     if (videoId == null) return
 
+    val hintKey = CatalogPrewarmService.cacheHintKey(type, videoId)
     val isThisItem = DebridDownloadManager.isActiveFor(type, videoId)
-    // Visibility gate (TV parity): only offer Download when the details-open prewarm reported this
-    // title as NOT cached (so there is genuinely something to download), OR a download for it is
-    // already active (keep the progress ring visible). Hidden while the cache state is still
-    // unknown (key absent) or when a cached/playable stream exists (hint == true) — e.g. "The Beach".
-    val notCached = cacheHints[CatalogPrewarmService.cacheHintKey(type, videoId)] == false
-    if (!isThisItem && !notCached) return
-
-    val buttonSize: Dp = if (isTablet) 56.dp else 52.dp
-    val thisProgress = progress?.takeIf { isThisItem }
+    // Progress for THIS title, matched by id (only one global active download) so the "Downloaded"
+    // checkmark still renders after onCachedReady() clears activePrepare — otherwise the button would
+    // just vanish on click for an already-cached title (the disappear-on-click bug).
+    val thisProgress = progress?.takeIf { it.videoId == videoId.trim() }
 
     val ready = thisProgress?.ready == true
     val queued = thisProgress?.queued == true
     val preparing = thisProgress?.isPreparing == true
     val active = ready || queued || preparing
+
+    // Visibility gate (TV parity): keep the button while THIS title is actively
+    // downloading/queued/ready; otherwise only OFFER Download when the details-open prewarm reported
+    // the title as NOT cached AND that it actually HAS streams to download. Hidden while the cache
+    // state is unknown (key absent), when a cached/playable stream already exists (notCached == false,
+    // e.g. "The Beach"), or when the title has NO streams at all (has_streams == false — nothing to
+    // download despite being "not cached").
+    val notCached = cacheHints[hintKey] == false
+    val hasStreams = streamPresence[hintKey] != false // fail-open: unknown/true → may exist
+    val downloadable = notCached && hasStreams
+    if (!isThisItem && !active && !downloadable) return
+
+    val buttonSize: Dp = if (isTablet) 56.dp else 52.dp
 
     var showStatusDialog by remember { mutableStateOf(false) }
 
