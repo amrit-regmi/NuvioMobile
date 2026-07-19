@@ -329,36 +329,14 @@ private fun StreamInfoContent(
             append("E").append(it.toString().padStart(2, '0'))
         }
     }
-    val qualityText = listOfNotNull(
-        seText.takeIf { it.isNotBlank() },
-        info.resolution?.takeIf { it.isNotBlank() },
-        info.source?.takeIf { it.isNotBlank() },
-    ).joinToString(dot)
+    // #160: the Elite-Badges row (rendered right after this content) now carries resolution,
+    // source, video codec, bit-depth, HDR and audio format/channels as logo badges — so we
+    // DROP those text chips here to avoid showing every fact twice. Keep only S/E (no badge
+    // equivalent). Size·runtime·bitrate and the audio/subtitle language row stay below.
+    val qualityText = seText
     if (qualityText.isNotBlank()) {
         InfoRow {
             InfoSegment(Icons.Rounded.Hd, qualityText, secondary, lineStyle, Modifier.weight(1f, fill = false))
-        }
-    }
-
-    // Video + audio on one line: [Movie] x264 · 10-bit · HDR10   [Speaker] DTS-HD MA 5.1
-    val videoText = (
-        listOfNotNull(
-            info.videoCodec?.takeIf { it.isNotBlank() },
-            info.bitDepth?.takeIf { it.isNotBlank() },
-        ) + info.dynamicRange.filter { it.isNotBlank() }
-        ).joinToString(dot)
-    val audioText = listOfNotNull(
-        info.audioCodec?.takeIf { it.isNotBlank() },
-        info.audioChannels?.takeIf { it.isNotBlank() },
-    ).joinToString(" ")
-    if (videoText.isNotBlank() || audioText.isNotBlank()) {
-        InfoRow {
-            if (videoText.isNotBlank()) {
-                InfoSegment(Icons.Rounded.Movie, videoText, secondary, lineStyle, Modifier.weight(1f, fill = false))
-            }
-            if (audioText.isNotBlank()) {
-                InfoSegment(Icons.AutoMirrored.Rounded.VolumeUp, audioText, secondary, lineStyle, Modifier.weight(1f, fill = false))
-            }
         }
     }
 

@@ -38,7 +38,7 @@ import com.nuvio.app.features.streams.StreamItem
  */
 private val AmberOutline = Color(0xFFEBA840)
 private val AmberFill = Color(0xFF3A2B10)
-private val BadgeHeight = 20.dp
+private val BadgeHeight = 16.dp
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -57,8 +57,8 @@ internal fun StreamPickerBadgeRow(
 
     FlowRow(
         modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(5.dp),
-        verticalArrangement = Arrangement.spacedBy(5.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         badges.forEach { matched ->
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -96,13 +96,13 @@ private fun DowngradePill(target: String) {
             .clip(shape)
             .background(AmberFill)
             .border(1.dp, AmberOutline, shape)
-            .padding(horizontal = 5.dp, vertical = 2.dp),
+            .padding(horizontal = 5.dp, vertical = 1.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         androidx.compose.material3.Text(
             text = "↓ $target",
             color = AmberOutline,
-            fontSize = 10.sp,
+            fontSize = 9.sp,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
         )
