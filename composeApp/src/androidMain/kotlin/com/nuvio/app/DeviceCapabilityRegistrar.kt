@@ -283,15 +283,18 @@ object DeviceCapabilityRegistrar {
      *     for E-AC3-JOC / AC4 / DTS / DTS-HD, and read HDMI/HDMI-ARC sink channel masks via
      *     `AudioManager.getDevices()` for the real output channel count. Union of both wins.
      *
-     * AAC is always included (universally decodable). Channel label is derived from the highest
-     * channel count seen across decoders and HDMI sinks (8→7.1, 6→5.1, else 2.0). All API-gated
-     * constants are guarded by SDK_INT so this compiles/runs from API 21 up.
+     * AAC is always included (universally decodable). The channel COUNT is derived ONLY from what the
+     * device can actually RENDER — real output sinks (`AudioDeviceInfo.channelCounts`) plus any
+     * working bitstream-passthrough path — NOT decoder `maxInputChannelCount`, which merely says the
+     * chip can DECODE 5.1/7.1 (true of virtually every tablet/phone whose speakers are stereo). Label
+     * (8→7.1, 6→5.1, else 2.0). All API-gated constants are guarded by SDK_INT (API 21 up).
      */
     private fun detectAudioCaps(context: Context): AudioCaps {
         val formats = linkedSetOf("AAC")
         var maxChannels = 2
 
-        // (1) On-board decoders.
+        // (1) On-board decoders — FORMAT labels only (which codecs decode on-board). The decoder's
+        // input channel count is deliberately NOT used for the render channel count (see (2)/(2b)).
         try {
             val list = MediaCodecList(MediaCodecList.REGULAR_CODECS)
             for (info in list.codecInfos) {
@@ -309,29 +312,23 @@ object DeviceCapabilityRegistrar {
                         "dts.hd" in t || "dts-hd" in t -> formats += "DTS-HD"
                         "dts" in t -> formats += "DTS"
                     }
-                    val caps = runCatching { info.getCapabilitiesForType(type) }.getOrNull() ?: continue
-                    val ch = runCatching { caps.audioCapabilities?.maxInputChannelCount ?: 0 }.getOrNull() ?: 0
-                    if (ch > maxChannels) maxChannels = ch
                 }
             }
         } catch (_: Exception) {
         }
 
-        // (2) HDMI / ARC passthrough to an external AVR or soundbar.
+        // (2) Real OUTPUT sinks decide the renderable PCM channel count — a stereo-speaker tablet
+        // reports [2] here regardless of what its decoders can DECODE; a device on an AVR/soundbar
+        // reports the sink's real channel count (HDMI/ARC/eARC/USB/BT). Empty channelCounts = skip.
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
                 val devices = am?.getDevices(AudioManager.GET_DEVICES_OUTPUTS) ?: emptyArray()
                 for (d in devices) {
-                    if (d.type == AudioDeviceInfo.TYPE_HDMI ||
-                        d.type == AudioDeviceInfo.TYPE_HDMI_ARC ||
-                        (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && d.type == AudioDeviceInfo.TYPE_HDMI_EARC)
-                    ) {
-                        val chans = d.channelCounts
-                        if (chans != null && chans.isNotEmpty()) {
-                            val hi = chans.max()
-                            if (hi > maxChannels) maxChannels = hi
-                        }
+                    val chans = d.channelCounts
+                    if (chans != null && chans.isNotEmpty()) {
+                        val hi = chans.max()
+                        if (hi > maxChannels) maxChannels = hi
                     }
                 }
             }
@@ -342,10 +339,10 @@ object DeviceCapabilityRegistrar {
         // the device has no software decoder for them. API 29+ only; guarded.
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                fun supports(encoding: Int): Boolean = runCatching {
+                fun supports(encoding: Int, mask: Int): Boolean = runCatching {
                     val fmt = AudioFormat.Builder()
                         .setEncoding(encoding)
-                        .setChannelMask(AudioFormat.CHANNEL_OUT_5POINT1)
+                        .setChannelMask(mask)
                         .setSampleRate(48000)
                         .build()
                     val attrs = AudioAttributes.Builder()
@@ -355,13 +352,22 @@ object DeviceCapabilityRegistrar {
                     AudioTrack.isDirectPlaybackSupported(fmt, attrs)
                 }.getOrDefault(false)
 
-                if (supports(AudioFormat.ENCODING_E_AC3_JOC)) { formats += "Dolby Digital Plus"; formats += "Dolby Atmos" }
-                if (supports(AudioFormat.ENCODING_AC4)) formats += "Dolby Atmos"
-                if (supports(AudioFormat.ENCODING_E_AC3)) formats += "Dolby Digital Plus"
-                if (supports(AudioFormat.ENCODING_AC3)) formats += "Dolby Digital"
-                if (supports(AudioFormat.ENCODING_DOLBY_TRUEHD)) formats += "Dolby TrueHD"
-                if (supports(AudioFormat.ENCODING_DTS)) formats += "DTS"
-                if (supports(AudioFormat.ENCODING_DTS_HD)) formats += "DTS-HD"
+                // A working passthrough path means the sink RENDERS surround even when its PCM
+                // channelCounts reports only 2. 7.1-mask pass ⇒ 8ch, 5.1-mask pass ⇒ 6ch, else none.
+                // A tablet with no such sink returns false for every probe and stays at stereo.
+                fun floorFor(encoding: Int): Int = when {
+                    supports(encoding, AudioFormat.CHANNEL_OUT_7POINT1_SURROUND) -> 8
+                    supports(encoding, AudioFormat.CHANNEL_OUT_5POINT1) -> 6
+                    else -> 0
+                }
+
+                floorFor(AudioFormat.ENCODING_E_AC3_JOC).let { if (it > 0) { formats += "Dolby Digital Plus"; formats += "Dolby Atmos"; maxChannels = maxOf(maxChannels, it) } }
+                floorFor(AudioFormat.ENCODING_AC4).let { if (it > 0) { formats += "Dolby Atmos"; maxChannels = maxOf(maxChannels, it) } }
+                floorFor(AudioFormat.ENCODING_E_AC3).let { if (it > 0) { formats += "Dolby Digital Plus"; maxChannels = maxOf(maxChannels, it) } }
+                floorFor(AudioFormat.ENCODING_AC3).let { if (it > 0) { formats += "Dolby Digital"; maxChannels = maxOf(maxChannels, it) } }
+                floorFor(AudioFormat.ENCODING_DOLBY_TRUEHD).let { if (it > 0) { formats += "Dolby TrueHD"; maxChannels = maxOf(maxChannels, it) } }
+                floorFor(AudioFormat.ENCODING_DTS).let { if (it > 0) { formats += "DTS"; maxChannels = maxOf(maxChannels, it) } }
+                floorFor(AudioFormat.ENCODING_DTS_HD).let { if (it > 0) { formats += "DTS-HD"; maxChannels = maxOf(maxChannels, it) } }
             }
         } catch (_: Exception) {
         }
@@ -403,13 +409,20 @@ object DeviceCapabilityRegistrar {
             "5.1" -> 6
             else -> 2
         }
-        // Only the object/lossless formats matter for the audioObject downgrade decision.
-        val objectFormats = audio.formats.filter { fmt ->
-            fmt.equals("Dolby Atmos", ignoreCase = true) ||
-                fmt.equals("Dolby TrueHD", ignoreCase = true) ||
-                fmt.equals("DTS:X", ignoreCase = true) ||
-                fmt.equals("DTS-HD", ignoreCase = true)
-        }.toSet()
+        // Only the object/lossless formats matter for the audioObject downgrade decision — and only
+        // when the device can actually RENDER surround (>=5.1). A stereo-only device that merely
+        // *decodes* Atmos downmixes it to 2.0, so the object badge should downgrade to "core" there
+        // too. Real surround setups (AVR/soundbar) land at maxChannels>=6 via (2)/(2b) and keep it.
+        val objectFormats = if (maxChannels >= 6) {
+            audio.formats.filter { fmt ->
+                fmt.equals("Dolby Atmos", ignoreCase = true) ||
+                    fmt.equals("Dolby TrueHD", ignoreCase = true) ||
+                    fmt.equals("DTS:X", ignoreCase = true) ||
+                    fmt.equals("DTS-HD", ignoreCase = true)
+            }.toSet()
+        } else {
+            emptySet()
+        }
         runCatching {
             DeviceCapabilities.publish(
                 DeviceCapabilitiesSnapshot(
