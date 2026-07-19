@@ -2,6 +2,11 @@ package com.nuvio.app
 
 import android.content.Context
 import android.hardware.display.DisplayManager
+import android.media.AudioAttributes
+import android.media.AudioDeviceInfo
+import android.media.AudioFormat
+import android.media.AudioManager
+import android.media.AudioTrack
 import android.media.MediaCodecList
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
@@ -58,6 +63,7 @@ object DeviceCapabilityRegistrar {
         val maxResolution = detectMaxResolution(decode)
         val hdrTypes = detectHdrTypes(context, decode)
         val codecs = detectCodecs()
+        val audio = detectAudioCaps(context)
         val formFactor = detectFormFactor(context)
         val appVersion = detectAppVersion(context)
         // Bound stream size so the backend never returns a file this device can't comfortably
@@ -83,8 +89,8 @@ object DeviceCapabilityRegistrar {
             append("\"app_version\":\"$appVersion\",")
             append("\"max_resolution\":\"$maxResolution\",")
             append("\"hdr_types_supported\":${hdrTypes.joinToString(",", "[", "]") { "\"$it\"" }},")
-            append("\"max_audio_channels\":\"7.1\",")
-            append("\"preferred_audio_formats\":[\"Dolby Atmos\",\"DTS:X\",\"AAC\"],")
+            append("\"max_audio_channels\":\"${audio.maxChannelsLabel}\",")
+            append("\"preferred_audio_formats\":${audio.formats.joinToString(",", "[", "]") { "\"$it\"" }},")
             append("\"supported_codecs\":${codecs.joinToString(",", "[", "]") { "\"$it\"" }},")
             append("\"max_size_gb\":$maxSizeGb,")
             append("\"download_speed_mbps\":$downloadSpeedMbps")
@@ -96,7 +102,8 @@ object DeviceCapabilityRegistrar {
         val response = httpRequestRaw("PUT", url, headers, body)
         log.d {
             "Device capability registration: ${response.status} | id=$deviceId res=$maxResolution " +
-                "hdr=$hdrTypes codecs=$codecs maxSizeGb=$maxSizeGb downMbps=$downloadSpeedMbps form=$formFactor " +
+                "hdr=$hdrTypes codecs=$codecs audio=${audio.maxChannelsLabel}/${audio.formats} " +
+                "maxSizeGb=$maxSizeGb downMbps=$downloadSpeedMbps form=$formFactor " +
                 "decode(maxH=${decode.maxHeight} hdr10=${decode.hevcHdr10} 10bit=${decode.hevc10bit} dv=${decode.dolbyVision})"
         }
     }
@@ -246,5 +253,116 @@ object DeviceCapabilityRegistrar {
             if (names.any { "av01" in it || "av1" in it }) add("AV1")
             add("H.264")
         }
+    }
+
+    private data class AudioCaps(
+        val maxChannelsLabel: String,
+        val formats: List<String>,
+    )
+
+    /**
+     * What the device can actually RENDER for audio — detected, never hardcoded — so a future device
+     * (a phone with only stereo, a tablet on a 5.1 soundbar, a TV passing Atmos/DTS:X through HDMI to
+     * an AVR) each report their real capability. Two independent signals are unioned:
+     *
+     *  1. **Decoders** — enumerate `MediaCodecList` audio decoders. Each surround/object codec maps to
+     *     a format label the backend understands: ac3→Dolby Digital, eac3→Dolby Digital Plus,
+     *     eac3-joc/ac4→Dolby Atmos, true-hd→Dolby TrueHD, dts→DTS, dts-hd→DTS-HD, dts-uhd→DTS:X. The
+     *     decoders' `maxInputChannelCount` gives the channels the device can decode on-board.
+     *
+     *  2. **HDMI passthrough** — a device wired to an AVR/soundbar may not decode Atmos/DTS:X itself
+     *     but can BITSTREAM it downstream. We probe `AudioTrack.isDirectPlaybackSupported` (API 29+)
+     *     for E-AC3-JOC / AC4 / DTS / DTS-HD, and read HDMI/HDMI-ARC sink channel masks via
+     *     `AudioManager.getDevices()` for the real output channel count. Union of both wins.
+     *
+     * AAC is always included (universally decodable). Channel label is derived from the highest
+     * channel count seen across decoders and HDMI sinks (8→7.1, 6→5.1, else 2.0). All API-gated
+     * constants are guarded by SDK_INT so this compiles/runs from API 21 up.
+     */
+    private fun detectAudioCaps(context: Context): AudioCaps {
+        val formats = linkedSetOf("AAC")
+        var maxChannels = 2
+
+        // (1) On-board decoders.
+        try {
+            val list = MediaCodecList(MediaCodecList.REGULAR_CODECS)
+            for (info in list.codecInfos) {
+                if (info.isEncoder) continue
+                for (type in info.supportedTypes) {
+                    val t = type.lowercase()
+                    if (!t.startsWith("audio/")) continue
+                    when {
+                        "eac3-joc" in t -> { formats += "Dolby Digital Plus"; formats += "Dolby Atmos" }
+                        "ac4" in t -> formats += "Dolby Atmos"
+                        "eac3" in t -> formats += "Dolby Digital Plus"
+                        "ac3" in t -> formats += "Dolby Digital"
+                        "true-hd" in t || "truehd" in t -> formats += "Dolby TrueHD"
+                        "dts.uhd" in t || "dts-uhd" in t -> formats += "DTS:X"
+                        "dts.hd" in t || "dts-hd" in t -> formats += "DTS-HD"
+                        "dts" in t -> formats += "DTS"
+                    }
+                    val caps = runCatching { info.getCapabilitiesForType(type) }.getOrNull() ?: continue
+                    val ch = runCatching { caps.audioCapabilities?.maxInputChannelCount ?: 0 }.getOrNull() ?: 0
+                    if (ch > maxChannels) maxChannels = ch
+                }
+            }
+        } catch (_: Exception) {
+        }
+
+        // (2) HDMI / ARC passthrough to an external AVR or soundbar.
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+                val devices = am?.getDevices(AudioManager.GET_DEVICES_OUTPUTS) ?: emptyArray()
+                for (d in devices) {
+                    if (d.type == AudioDeviceInfo.TYPE_HDMI ||
+                        d.type == AudioDeviceInfo.TYPE_HDMI_ARC ||
+                        (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && d.type == AudioDeviceInfo.TYPE_HDMI_EARC)
+                    ) {
+                        val chans = d.channelCounts
+                        if (chans != null && chans.isNotEmpty()) {
+                            val hi = chans.max()
+                            if (hi > maxChannels) maxChannels = hi
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {
+        }
+
+        // (2b) Direct-playback (bitstream passthrough) probe — a sink can pass Atmos/DTS:X even when
+        // the device has no software decoder for them. API 29+ only; guarded.
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                fun supports(encoding: Int): Boolean = runCatching {
+                    val fmt = AudioFormat.Builder()
+                        .setEncoding(encoding)
+                        .setChannelMask(AudioFormat.CHANNEL_OUT_5POINT1)
+                        .setSampleRate(48000)
+                        .build()
+                    val attrs = AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MOVIE)
+                        .build()
+                    AudioTrack.isDirectPlaybackSupported(fmt, attrs)
+                }.getOrDefault(false)
+
+                if (supports(AudioFormat.ENCODING_E_AC3_JOC)) { formats += "Dolby Digital Plus"; formats += "Dolby Atmos" }
+                if (supports(AudioFormat.ENCODING_AC4)) formats += "Dolby Atmos"
+                if (supports(AudioFormat.ENCODING_E_AC3)) formats += "Dolby Digital Plus"
+                if (supports(AudioFormat.ENCODING_AC3)) formats += "Dolby Digital"
+                if (supports(AudioFormat.ENCODING_DOLBY_TRUEHD)) formats += "Dolby TrueHD"
+                if (supports(AudioFormat.ENCODING_DTS)) formats += "DTS"
+                if (supports(AudioFormat.ENCODING_DTS_HD)) formats += "DTS-HD"
+            }
+        } catch (_: Exception) {
+        }
+
+        val label = when {
+            maxChannels >= 8 -> "7.1"
+            maxChannels >= 6 -> "5.1"
+            else -> "2.0"
+        }
+        return AudioCaps(label, formats.toList())
     }
 }
