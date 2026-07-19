@@ -53,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.nuvio.app.features.debrid.DebridProviders
+import com.nuvio.app.features.streams.badges.StreamPickerBadgeRow
 
 @Composable
 internal fun StreamCard(
@@ -117,6 +118,8 @@ internal fun StreamCard(
                     isCurrent = isCurrent,
                     currentLabel = currentLabel,
                 )
+                Spacer(modifier = Modifier.height(6.dp))
+                StreamPickerBadgeRow(stream = stream)
             } else {
                 // Legacy rendering for addon streams without backend streamInfo.
                 if (hasBadges && badgePlacement == StreamBadgePlacement.TOP) {
@@ -159,6 +162,9 @@ internal fun StreamCard(
                         showFileSizeBadges = showFileSizeBadges,
                     )
                 }
+
+                Spacer(modifier = Modifier.height(6.dp))
+                StreamPickerBadgeRow(stream = stream)
             }
         }
 

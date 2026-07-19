@@ -15,6 +15,8 @@ import android.provider.Settings
 import co.touchlab.kermit.Logger
 import com.nuvio.app.core.auth.AuthRepository
 import com.nuvio.app.core.auth.AuthState
+import com.nuvio.app.core.device.DeviceCapabilities
+import com.nuvio.app.core.device.DeviceCapabilitiesSnapshot
 import com.nuvio.app.core.network.BackendAuth
 import com.nuvio.app.core.network.PrivateBackend
 import com.nuvio.app.features.addons.httpRequestRaw
@@ -79,6 +81,12 @@ object DeviceCapabilityRegistrar {
         // Report the active network's estimated downstream bandwidth so the backend can right-size
         // the stream to the link, not just the decoder. 0 when unknown (no permission needed).
         val downloadSpeedMbps = detectDownstreamMbps(context)
+
+        // Publish the SAME detected caps into the shared commonMain holder so the stream-picker
+        // badge UI can compute client-side downgrade pills (a 4K/DV/Atmos badge on a device that
+        // tops out lower) without another detection pass. Display-only; backend still does the
+        // real device-cap stream filtering via `?profile=`.
+        publishSharedCapabilities(maxResolution, hdrTypes, audio)
 
         val body = buildString {
             append("{")
@@ -364,5 +372,53 @@ object DeviceCapabilityRegistrar {
             else -> "2.0"
         }
         return AudioCaps(label, formats.toList())
+    }
+
+    /**
+     * Mirror the just-detected caps into the shared [DeviceCapabilities] holder that commonMain UI
+     * (stream-picker badge downgrade pills) reads. Kept in lockstep with the JSON body PUT to the
+     * backend so the client-side "will be downgraded" hint matches what the backend actually serves.
+     */
+    private fun publishSharedCapabilities(
+        maxResolution: String,
+        hdrTypes: List<String>,
+        audio: AudioCaps,
+    ) {
+        val vertical = when (maxResolution) {
+            "2160p" -> 2160
+            "1080p" -> 1080
+            "720p" -> 720
+            else -> 480
+        }
+        // hdrTypes labels come from detectHdrTypes: "DolbyVision" | "HDR10+" | "HDR10" | "HLG".
+        val hdrRank = when {
+            hdrTypes.any { it.equals("DolbyVision", ignoreCase = true) } -> 4
+            hdrTypes.any { it.equals("HDR10+", ignoreCase = true) } -> 3
+            hdrTypes.any { it.equals("HDR10", ignoreCase = true) } -> 2
+            hdrTypes.any { it.equals("HLG", ignoreCase = true) || it.equals("HDR", ignoreCase = true) } -> 1
+            else -> 0
+        }
+        val maxChannels = when (audio.maxChannelsLabel) {
+            "7.1" -> 8
+            "5.1" -> 6
+            else -> 2
+        }
+        // Only the object/lossless formats matter for the audioObject downgrade decision.
+        val objectFormats = audio.formats.filter { fmt ->
+            fmt.equals("Dolby Atmos", ignoreCase = true) ||
+                fmt.equals("Dolby TrueHD", ignoreCase = true) ||
+                fmt.equals("DTS:X", ignoreCase = true) ||
+                fmt.equals("DTS-HD", ignoreCase = true)
+        }.toSet()
+        runCatching {
+            DeviceCapabilities.publish(
+                DeviceCapabilitiesSnapshot(
+                    maxResolutionVertical = vertical,
+                    hdrRank = hdrRank,
+                    maxAudioChannels = maxChannels,
+                    objectAudioFormats = objectFormats,
+                ),
+            )
+        }
     }
 }
