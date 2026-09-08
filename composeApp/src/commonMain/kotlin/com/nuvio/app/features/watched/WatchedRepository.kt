@@ -25,11 +25,107 @@ import kotlinx.serialization.json.Json
 
 @Serializable
 private data class StoredWatchedPayload(
+    // Legacy flat list, kept for reading payloads written before compaction.
     val items: List<WatchedItem> = emptyList(),
+    // Compact representation: repeated id/type/name/poster/releaseInfo are stored once
+    // per content and episodes collapse into entries, drastically shrinking large
+    // series histories that previously OOM'd on decode.
+    val itemGroups: List<StoredWatchedItemGroup> = emptyList(),
     val lastSuccessfulPushEpochMs: Long = 0L,
     val deltaCursorEventId: Long = 0L,
     val deltaInitialized: Boolean = false,
 )
+
+@Serializable
+internal data class StoredWatchedItemEntry(
+    val season: Int? = null,
+    val episode: Int? = null,
+    val markedAtEpochMs: Long = 0L,
+)
+
+@Serializable
+internal data class StoredWatchedItemGroup(
+    val id: String,
+    val type: String,
+    val name: String,
+    val poster: String? = null,
+    val releaseInfo: String? = null,
+    val entries: List<StoredWatchedItemEntry> = emptyList(),
+)
+
+// Discard payloads that are too large to safely decode into memory; a corrupt or
+// runaway payload should reset rather than OOM the process on load.
+private const val maxRestorableWatchedPayloadChars = 4 * 1024 * 1024
+
+internal fun shouldRestoreWatchedPayload(payloadLength: Int): Boolean =
+    payloadLength <= maxRestorableWatchedPayloadChars
+
+private data class WatchedItemGroupKey(
+    val id: String,
+    val type: String,
+    val name: String,
+    val poster: String?,
+    val releaseInfo: String?,
+)
+
+internal fun compactWatchedItems(items: Collection<WatchedItem>): List<StoredWatchedItemGroup> =
+    items
+        .groupBy { item ->
+            WatchedItemGroupKey(
+                id = item.id,
+                type = item.type,
+                name = item.name,
+                poster = item.poster,
+                releaseInfo = item.releaseInfo,
+            )
+        }
+        .map { (key, grouped) ->
+            StoredWatchedItemGroup(
+                id = key.id,
+                type = key.type,
+                name = key.name,
+                poster = key.poster,
+                releaseInfo = key.releaseInfo,
+                entries = grouped
+                    .map { item ->
+                        StoredWatchedItemEntry(
+                            season = item.season,
+                            episode = item.episode,
+                            markedAtEpochMs = item.markedAtEpochMs,
+                        )
+                    }
+                    .sortedWith(
+                        compareBy<StoredWatchedItemEntry>(
+                            { it.season ?: -1 },
+                            { it.episode ?: -1 },
+                            { it.markedAtEpochMs },
+                        ),
+                    ),
+            )
+        }
+        .sortedWith(
+            compareBy(
+                StoredWatchedItemGroup::type,
+                StoredWatchedItemGroup::id,
+                StoredWatchedItemGroup::name,
+            ),
+        )
+
+internal fun expandWatchedItems(groups: Collection<StoredWatchedItemGroup>): List<WatchedItem> =
+    groups.flatMap { group ->
+        group.entries.map { entry ->
+            WatchedItem(
+                id = group.id,
+                type = group.type,
+                name = group.name,
+                poster = group.poster,
+                releaseInfo = group.releaseInfo,
+                season = entry.season,
+                episode = entry.episode,
+                markedAtEpochMs = entry.markedAtEpochMs,
+            )
+        }
+    }
 
 internal enum class WatchedTraktHistorySync {
     Mirror,
@@ -51,7 +147,9 @@ object WatchedRepository {
     private val log = Logger.withTag("WatchedRepository")
     private val json = Json {
         ignoreUnknownKeys = true
-        encodeDefaults = true
+        // Omit default/null fields (e.g. null poster/season/episode) to keep the
+        // persisted payload small and reduce peak memory on encode/decode.
+        encodeDefaults = false
     }
 
     private val _uiState = MutableStateFlow(WatchedUiState())
@@ -60,7 +158,7 @@ object WatchedRepository {
     private var hasLoaded = false
     private var currentProfileId: Int = 1
     private var profileGeneration: Long = 0L
-    private var itemsByKey: MutableMap<String, WatchedItem> = mutableMapOf()
+    private val itemsStore = WatchedItemsStore()
     private var lastSuccessfulPushEpochMs: Long = 0L
     private var deltaCursorEventId: Long = 0L
     private var deltaInitialized: Boolean = false
@@ -80,7 +178,7 @@ object WatchedRepository {
         hasLoaded = false
         currentProfileId = 1
         profileGeneration += 1L
-        itemsByKey.clear()
+        itemsStore.update { it.clear() }
         lastSuccessfulPushEpochMs = 0L
         deltaCursorEventId = 0L
         deltaInitialized = false
@@ -91,20 +189,29 @@ object WatchedRepository {
         currentProfileId = profileId
         profileGeneration += 1L
         hasLoaded = true
-        itemsByKey.clear()
+        itemsStore.update { it.clear() }
 
         val payload = WatchedStorage.loadPayload(profileId).orEmpty().trim()
         if (payload.isNotEmpty()) {
-            val storedPayload = runCatching {
-                json.decodeFromString<StoredWatchedPayload>(payload)
-            }.getOrDefault(StoredWatchedPayload())
+            val storedPayload = if (shouldRestoreWatchedPayload(payload.length)) {
+                runCatching {
+                    json.decodeFromString<StoredWatchedPayload>(payload)
+                }.getOrDefault(StoredWatchedPayload())
+            } else {
+                log.w { "Discarding oversized watched payload (${payload.length} chars) for profile $profileId" }
+                WatchedStorage.savePayload(profileId, "")
+                StoredWatchedPayload()
+            }
             lastSuccessfulPushEpochMs = storedPayload.lastSuccessfulPushEpochMs
             deltaCursorEventId = storedPayload.deltaCursorEventId
             deltaInitialized = storedPayload.deltaInitialized
-            itemsByKey = storedPayload.items
+            val restoredItems = (storedPayload.items + expandWatchedItems(storedPayload.itemGroups))
                 .map(WatchedItem::normalizedMarkedAt)
                 .associateBy { watchedItemKey(it.type, it.id, it.season, it.episode) }
-                .toMutableMap()
+            itemsStore.update { items ->
+                items.clear()
+                items.putAll(restoredItems)
+            }
         } else {
             lastSuccessfulPushEpochMs = 0L
             deltaCursorEventId = 0L
@@ -135,9 +242,11 @@ object WatchedRepository {
             return
         }
         val pullStartedEpochMs = WatchedClock.nowEpochMs()
-        val localBeforePull = itemsByKey.values
-            .map(WatchedItem::normalizedMarkedAt)
-            .toList()
+        val localBeforePull = itemsStore.read { items ->
+            items.values
+                .map(WatchedItem::normalizedMarkedAt)
+                .toList()
+        }
         val lastPushEpochMs = lastSuccessfulPushEpochMs
         runCatching {
             if (shouldUseTraktWatchedSync()) {
@@ -179,12 +288,16 @@ object WatchedRepository {
         )
         if (!isActiveOperation(profileId, operationGeneration)) return
 
-        itemsByKey = mergeWatchedItemsPreservingUnsynced(
+        val merged = mergeWatchedItemsPreservingUnsynced(
             serverItems = serverItems,
             localItems = localBeforePull,
             lastSuccessfulPushEpochMs = lastPushEpochMs,
             pullStartedEpochMs = pullStartedEpochMs,
-        ).toMutableMap()
+        )
+        itemsStore.update { items ->
+            items.clear()
+            items.putAll(merged)
+        }
         if (resetDeltaState) {
             deltaCursorEventId = 0L
             deltaInitialized = false
@@ -257,25 +370,27 @@ object WatchedRepository {
         lastPushEpochMs: Long,
         pullStartedEpochMs: Long,
     ) {
-        events.forEach { event ->
-            val key = watchedItemKey(event.contentType, event.contentId, event.season, event.episode)
-            when (event.operation.lowercase()) {
-                watchedDeltaOperationUpsert -> {
-                    itemsByKey[key] = WatchedItem(
-                        id = event.contentId,
-                        type = event.contentType,
-                        name = event.title,
-                        season = event.season,
-                        episode = event.episode,
-                        markedAtEpochMs = normalizeWatchedMarkedAtEpochMs(event.watchedAt),
-                    )
-                }
-                watchedDeltaOperationDelete -> {
-                    val localItem = itemsByKey[key]
-                    if (localItem != null && shouldPreserveLocalWatchedItem(localItem, lastPushEpochMs, pullStartedEpochMs)) {
-                        return@forEach
+        itemsStore.update { items ->
+            events.forEach { event ->
+                val key = watchedItemKey(event.contentType, event.contentId, event.season, event.episode)
+                when (event.operation.lowercase()) {
+                    watchedDeltaOperationUpsert -> {
+                        items[key] = WatchedItem(
+                            id = event.contentId,
+                            type = event.contentType,
+                            name = event.title,
+                            season = event.season,
+                            episode = event.episode,
+                            markedAtEpochMs = normalizeWatchedMarkedAtEpochMs(event.watchedAt),
+                        )
                     }
-                    itemsByKey.remove(key)
+                    watchedDeltaOperationDelete -> {
+                        val localItem = items[key]
+                        if (localItem != null && shouldPreserveLocalWatchedItem(localItem, lastPushEpochMs, pullStartedEpochMs)) {
+                            return@forEach
+                        }
+                        items.remove(key)
+                    }
                 }
             }
         }
@@ -284,7 +399,7 @@ object WatchedRepository {
     fun toggleWatched(item: WatchedItem) {
         ensureLoaded()
         val key = watchedItemKey(item.type, item.id, item.season, item.episode)
-        if (itemsByKey.containsKey(key)) {
+        if (itemsStore.read { it.containsKey(key) }) {
             unmarkWatched(item)
         } else {
             markWatched(item)
@@ -314,9 +429,11 @@ object WatchedRepository {
         val timestampedItems = items.map { watchedItem ->
             watchedItem.copy(markedAtEpochMs = markedAt)
         }
-        timestampedItems.forEach { watchedItem ->
-            val key = watchedItemKey(watchedItem.type, watchedItem.id, watchedItem.season, watchedItem.episode)
-            itemsByKey[key] = watchedItem
+        itemsStore.update { store ->
+            timestampedItems.forEach { watchedItem ->
+                val key = watchedItemKey(watchedItem.type, watchedItem.id, watchedItem.season, watchedItem.episode)
+                store[key] = watchedItem
+            }
         }
         publish()
         persist()
@@ -352,8 +469,10 @@ object WatchedRepository {
     fun unmarkWatched(items: Collection<WatchedItem>) {
         ensureLoaded()
         if (items.isEmpty()) return
-        val removedItems = items.mapNotNull { watchedItem ->
-            itemsByKey.remove(watchedItemKey(watchedItem.type, watchedItem.id, watchedItem.season, watchedItem.episode))
+        val removedItems = itemsStore.update { store ->
+            items.mapNotNull { watchedItem ->
+                store.remove(watchedItemKey(watchedItem.type, watchedItem.id, watchedItem.season, watchedItem.episode))
+            }
         }
         if (removedItems.isNotEmpty()) {
             publish()
@@ -369,7 +488,8 @@ object WatchedRepository {
         episode: Int? = null,
     ): Boolean {
         ensureLoaded()
-        return itemsByKey.containsKey(watchedItemKey(type, id, season, episode))
+        val key = watchedItemKey(type, id, season, episode)
+        return itemsStore.read { it.containsKey(key) }
     }
 
     fun reconcileSeriesWatchedState(
@@ -434,7 +554,7 @@ object WatchedRepository {
     }
 
     private fun publish() {
-        val items = itemsByKey.values
+        val items = itemsStore.read { store -> store.values.toList() }
             .map(WatchedItem::normalizedMarkedAt)
             .sortedByDescending { it.markedAtEpochMs }
         _uiState.value = WatchedUiState(
@@ -447,13 +567,14 @@ object WatchedRepository {
     }
 
     private fun persist() {
+        val snapshot = itemsStore.read { store -> store.values.toList() }
         WatchedStorage.savePayload(
             currentProfileId,
             json.encodeToString(
                 StoredWatchedPayload(
-                    items = itemsByKey.values
-                        .map(WatchedItem::normalizedMarkedAt)
-                        .sortedByDescending { it.markedAtEpochMs },
+                    itemGroups = compactWatchedItems(
+                        snapshot.map(WatchedItem::normalizedMarkedAt),
+                    ),
                     lastSuccessfulPushEpochMs = lastSuccessfulPushEpochMs,
                     deltaCursorEventId = deltaCursorEventId,
                     deltaInitialized = deltaInitialized,
