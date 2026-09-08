@@ -49,6 +49,60 @@ private const val WATCH_PROGRESS_METADATA_RESOLUTION_LIMIT = 64
 private const val WATCH_PROGRESS_DELTA_PAGE_SIZE = 900
 private const val WATCH_PROGRESS_DELTA_OPERATION_UPSERT = "upsert"
 private const val WATCH_PROGRESS_DELTA_OPERATION_DELETE = "delete"
+private const val WATCH_PROGRESS_REMOTE_WRITE_DEDUP_WINDOW_MS = 5_000L
+
+private data class RemoteProgressWriteKey(
+    val profileId: Int,
+    val progressKey: String,
+)
+
+private data class RemoteProgressWrite(
+    val entry: WatchProgressEntry,
+    val sentAtEpochMs: Long,
+)
+
+// Hand-ported from upstream d0c7bff7 (perf(progress): deduplicate terminal sync writes).
+// Suppresses identical terminal scrobble writes fired within a short window so a burst of
+// end-of-playback upserts for the same entry hits our backend only once. Adapted to this fork:
+// the dedup key is the entry videoId (this fork's stable progress identity) rather than upstream's
+// resolvedProgressKey(), which does not exist here.
+internal class RemoteProgressWriteDeduplicator(
+    private val windowMs: Long = WATCH_PROGRESS_REMOTE_WRITE_DEDUP_WINDOW_MS,
+) {
+    private val lock = SynchronizedObject()
+    private val recentWrites = mutableMapOf<RemoteProgressWriteKey, RemoteProgressWrite>()
+
+    fun shouldSend(
+        profileId: Int,
+        entry: WatchProgressEntry,
+        nowEpochMs: Long,
+    ): Boolean = synchronized(lock) {
+        recentWrites.entries.removeAll { (_, write) ->
+            val elapsedMs = nowEpochMs - write.sentAtEpochMs
+            elapsedMs < 0L || elapsedMs >= windowMs
+        }
+        val key = RemoteProgressWriteKey(
+            profileId = profileId,
+            progressKey = entry.videoId,
+        )
+        val normalizedEntry = entry.copy(lastUpdatedEpochMs = 0L)
+        val previous = recentWrites[key]
+        if (previous?.entry == normalizedEntry) {
+            return@synchronized false
+        }
+        recentWrites[key] = RemoteProgressWrite(
+            entry = normalizedEntry,
+            sentAtEpochMs = nowEpochMs,
+        )
+        true
+    }
+
+    fun clear() {
+        synchronized(lock) {
+            recentWrites.clear()
+        }
+    }
+}
 
 private data class RemoteMetadataResolutionResult(
     val key: Pair<String, String>,
@@ -95,6 +149,7 @@ object WatchProgressRepository {
     private var deltaCursorEventId = 0L
     private var deltaInitialized = false
     private var lastAddonMetadataReadyFingerprint: String? = null
+    private val remoteWriteDeduplicator = RemoteProgressWriteDeduplicator()
     internal var syncAdapter: ProgressSyncAdapter = SupabaseProgressSyncAdapter
 
     init {
@@ -191,6 +246,7 @@ object WatchProgressRepository {
         lastSuccessfulPushEpochMs = 0L
         deltaCursorEventId = 0L
         deltaInitialized = false
+        remoteWriteDeduplicator.clear()
         TraktProgressRepository.clearLocalState()
         TraktSettingsRepository.clearLocalState()
         _uiState.value = WatchProgressUiState()
@@ -1020,6 +1076,18 @@ object WatchProgressRepository {
     }
 
     private fun pushScrobbleToServer(entry: WatchProgressEntry, profileId: Int) {
+        // d0c7bff7: skip a terminal remote write that is identical to one just sent within the dedup
+        // window (both upsert call sites funnel through here), so end-of-playback bursts hit the
+        // backend once instead of repeatedly.
+        if (
+            !remoteWriteDeduplicator.shouldSend(
+                profileId = profileId,
+                entry = entry,
+                nowEpochMs = entry.lastUpdatedEpochMs,
+            )
+        ) {
+            return
+        }
         syncScope.launch {
             runCatching {
                 syncAdapter.push(profileId = profileId, entries = listOf(entry))
