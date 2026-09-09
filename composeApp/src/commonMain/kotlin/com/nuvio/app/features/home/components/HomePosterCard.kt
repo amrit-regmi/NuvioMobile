@@ -8,6 +8,7 @@ import com.nuvio.app.core.ui.NuvioPosterShape
 import com.nuvio.app.core.ui.rememberPosterCardStyleUiState
 import com.nuvio.app.features.home.MetaPreview
 import com.nuvio.app.features.home.PosterShape
+import com.nuvio.app.features.home.StreamStatus
 
 @Composable
 fun HomePosterCard(
@@ -31,6 +32,7 @@ fun HomePosterCard(
         bottomLeftLogoUrl = if (isLandscapeMode) item.logo else null,
         bottomLeftText = if (isLandscapeMode && item.logo.isNullOrBlank() && !posterCardStyle.hideLabelsEnabled) item.name else null,
         isWatched = isWatched,
+        isStreamUnavailable = item.streamStatus == StreamStatus.UNAVAILABLE,
         onClick = onClick,
         onLongClick = onLongClick,
     )

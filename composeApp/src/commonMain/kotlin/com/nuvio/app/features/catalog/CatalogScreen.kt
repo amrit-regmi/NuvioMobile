@@ -1,6 +1,7 @@
 package com.nuvio.app.features.catalog
 
 import androidx.compose.foundation.background
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -55,6 +56,7 @@ import com.nuvio.app.core.ui.withDuplicateSafeLazyKeys
 import com.nuvio.app.features.home.MetaPreview
 import com.nuvio.app.features.home.HomeCatalogSettingsRepository
 import com.nuvio.app.features.home.PosterShape
+import com.nuvio.app.features.home.StreamStatus
 import com.nuvio.app.features.home.stableKey
 import com.nuvio.app.features.watched.WatchedRepository
 import com.nuvio.app.features.watching.application.WatchingState
@@ -296,6 +298,15 @@ private fun CatalogPosterTile(
                     contentDescription = item.name,
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop,
+                )
+            }
+            // Backend flags this browse item as having no playable/queueable stream.
+            // Dim the poster (mirrors NuvioTV's ~0.55 black alpha) while still showing it.
+            if (item.streamStatus == StreamStatus.UNAVAILABLE) {
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .background(Color.Black.copy(alpha = 0.55f)),
                 )
             }
             NuvioPosterWatchedOverlay(isWatched = isWatched)

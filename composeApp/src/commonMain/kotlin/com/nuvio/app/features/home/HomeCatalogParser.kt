@@ -57,6 +57,7 @@ internal object HomeCatalogParser {
                     genres = meta.array("genres").mapNotNull { genre ->
                         genre.jsonPrimitive.contentOrNull?.takeIf { it.isNotBlank() }
                     },
+                    streamStatus = StreamStatus.fromString(meta.string("streamStatus")),
                 )
                 if (seenKeys.add(item.stableKey())) {
                     add(item)

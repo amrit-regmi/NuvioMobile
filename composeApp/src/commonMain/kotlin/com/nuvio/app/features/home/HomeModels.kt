@@ -18,9 +18,32 @@ data class MetaPreview(
     val voteCount: Int? = null,
     val imdbRating: String? = null,
     val genres: List<String> = emptyList(),
+    val streamStatus: StreamStatus = StreamStatus.UNKNOWN,
 )
 
 fun MetaPreview.stableKey(): String = "$type:$id"
+
+/**
+ * Backend-computed stream availability for a catalog/browse item, recomputed on every fetch
+ * (no client caching). Mirrors NuvioTV's StreamStatus. Only [UNAVAILABLE] items are grayed out
+ * in browse/catalog rows; [INSTANT]/[QUEUEABLE] have a playable/queueable link and render normally.
+ * Missing/unknown values map to [UNKNOWN] and are treated as available (never grayed).
+ */
+enum class StreamStatus {
+    UNKNOWN,     // not yet checked / not provided
+    INSTANT,     // cached in Torbox, ready to play
+    QUEUEABLE,   // known torrent, can be added to Torbox
+    UNAVAILABLE; // no known hashes
+
+    companion object {
+        fun fromString(s: String?): StreamStatus = when (s?.lowercase()) {
+            "instant" -> INSTANT
+            "queueable" -> QUEUEABLE
+            "unavailable" -> UNAVAILABLE
+            else -> UNKNOWN
+        }
+    }
+}
 
 enum class PosterShape {
     Poster,
