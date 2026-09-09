@@ -1,6 +1,7 @@
 package com.nuvio.app.features.details
 
 import com.nuvio.app.features.home.MetaPreview
+import com.nuvio.app.features.home.StreamStatus
 import com.nuvio.app.features.streams.StreamItem
 
 data class MetaDetails(
@@ -20,6 +21,9 @@ data class MetaDetails(
     val status: String? = null,
     val imdbRating: String? = null,
     val ageRating: String? = null,
+    /** Backend-computed stream availability, attached to /meta by catalog/main.py. Defaults to
+     *  UNKNOWN when absent; only UNAVAILABLE surfaces the details "No streams" pill. */
+    val streamStatus: StreamStatus = StreamStatus.UNKNOWN,
     val runtime: String? = null,
     val externalRatings: List<MetaExternalRating> = emptyList(),
     val genres: List<String> = emptyList(),

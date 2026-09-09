@@ -33,6 +33,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.font.FontWeight
@@ -55,6 +56,7 @@ import com.nuvio.app.core.ui.withDuplicateSafeLazyKeys
 import com.nuvio.app.features.home.MetaPreview
 import com.nuvio.app.features.home.HomeCatalogSettingsRepository
 import com.nuvio.app.features.home.PosterShape
+import com.nuvio.app.features.home.StreamStatus
 import com.nuvio.app.features.home.stableKey
 import com.nuvio.app.features.watched.WatchedRepository
 import com.nuvio.app.features.watching.application.WatchingState
@@ -299,6 +301,27 @@ private fun CatalogPosterTile(
                 )
             }
             NuvioPosterWatchedOverlay(isWatched = isWatched)
+
+            // Compact "No streams" corner chip — poster stays full color (no dim/overlay),
+            // shown only when the backend flagged the item as having no playable/queueable stream.
+            if (item.streamStatus == StreamStatus.UNAVAILABLE) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(6.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color.Black.copy(alpha = 0.72f))
+                        .padding(horizontal = 6.dp, vertical = 3.dp),
+                ) {
+                    Text(
+                        text = stringResource(Res.string.meta_no_streams_pill),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
         }
         if (!hideLabels) {
             Text(

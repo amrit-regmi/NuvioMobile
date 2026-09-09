@@ -29,6 +29,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.Dp
@@ -38,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.home_view_all
+import nuvio.composeapp.generated.resources.meta_no_streams_pill
 import nuvio.composeapp.generated.resources.poster_logo_content_description
 import org.jetbrains.compose.resources.stringResource
 
@@ -111,6 +113,7 @@ fun NuvioPosterCard(
     bottomLeftLogoUrl: String? = null,
     bottomLeftText: String? = null,
     isWatched: Boolean = false,
+    streamUnavailable: Boolean = false,
     onClick: (() -> Unit)? = null,
     onLongClick: (() -> Unit)? = null,
 ) {
@@ -185,6 +188,16 @@ fun NuvioPosterCard(
             }
 
             NuvioPosterWatchedOverlay(isWatched = isWatched)
+
+            // Small "No streams" corner chip — poster art stays full color (no dim/overlay);
+            // shown only when the backend flagged this item as having no playable/queueable stream.
+            if (streamUnavailable) {
+                NuvioPosterStreamUnavailableChip(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(NuvioTokens.Space.s6),
+                )
+            }
         }
         if (shouldShowTitleBelow) {
             Text(
@@ -208,6 +221,26 @@ fun NuvioPosterCard(
         } else {
             Box(modifier = Modifier.height(NuvioTokens.Space.none))
         }
+    }
+}
+
+@Composable
+private fun NuvioPosterStreamUnavailableChip(
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(Color.Black.copy(alpha = 0.72f))
+            .padding(horizontal = 6.dp, vertical = 3.dp),
+    ) {
+        Text(
+            text = stringResource(Res.string.meta_no_streams_pill),
+            style = MaterialTheme.typography.labelSmall,
+            color = Color.White,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 

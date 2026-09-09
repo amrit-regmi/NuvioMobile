@@ -1,5 +1,6 @@
 package com.nuvio.app.features.details
 
+import com.nuvio.app.features.home.StreamStatus
 import com.nuvio.app.features.streams.StreamBehaviorHints
 import com.nuvio.app.features.streams.StreamItem
 import com.nuvio.app.features.streams.StreamProxyHeaders
@@ -49,6 +50,8 @@ internal object MetaDetailsParser {
             // Precedence matches NuvioTV's MetaMapper: app_extras.certification, then the
             // top-level certification, then the legacy ageRating field.
             ageRating = meta.ageRating(),
+            // Backend-computed availability attached to /meta (catalog/main.py). Absent → UNKNOWN.
+            streamStatus = StreamStatus.fromString(meta.string("streamStatus")),
             runtime = meta.string("runtime"),
             genres = meta.stringList("genres"),
             director = meta.directors(links),

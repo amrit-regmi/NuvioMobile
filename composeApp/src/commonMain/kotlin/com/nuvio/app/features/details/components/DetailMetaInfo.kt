@@ -33,13 +33,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.core.ui.AggregatedRatingsRow
 import com.nuvio.app.core.ui.unifyAggregatedRatings
 import com.nuvio.app.features.details.MetaDetails
 import com.nuvio.app.features.details.formatRuntimeForDisplay
 import com.nuvio.app.features.details.formatMetaReleaseLineForDetails
-import com.nuvio.app.features.streams.CatalogPrewarmService
+import com.nuvio.app.features.home.StreamStatus
 import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.stringResource
 
@@ -58,13 +57,10 @@ fun DetailMetaInfo(
         val runtimeText = formatRuntimeForDisplay(meta.runtime)
         val ageBadge = meta.ageRating?.trim()?.takeIf { it.isNotBlank() }
 
-        // "No streams" gate. The details /meta payload carries no streamStatus, so the details
-        // screen's authoritative availability signal is the prewarm stream-presence hint (the same
-        // one that gates the Download button): an explicit has_streams:false means no playable/
-        // queueable stream exists. Fail-open — only an explicit false shows the pill.
-        val streamPresence by CatalogPrewarmService.streamPresence.collectAsStateWithLifecycle()
-        val presenceKey = CatalogPrewarmService.cacheHintKey(meta.type, meta.id)
-        val isStreamUnavailable = streamPresence[presenceKey] == false
+        // "No streams" gate. The backend attaches streamStatus to /meta (catalog/main.py); an
+        // UNAVAILABLE value means no playable/queueable stream exists. Fail-open — only an explicit
+        // UNAVAILABLE shows the pill (UNKNOWN/missing is treated as available).
+        val isStreamUnavailable = meta.streamStatus == StreamStatus.UNAVAILABLE
 
         // Unify ALL ratings into one deduped set, mirroring NuvioTV's HeroSection. Fold the
         // inline meta.imdbRating into the aggregated (/catalog-addon/ratings → externalRatings)
