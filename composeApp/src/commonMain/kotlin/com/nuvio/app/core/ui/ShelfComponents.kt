@@ -29,7 +29,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.Dp
@@ -112,7 +111,6 @@ fun NuvioPosterCard(
     bottomLeftLogoUrl: String? = null,
     bottomLeftText: String? = null,
     isWatched: Boolean = false,
-    isStreamUnavailable: Boolean = false,
     onClick: (() -> Unit)? = null,
     onLongClick: (() -> Unit)? = null,
 ) {
@@ -184,16 +182,6 @@ fun NuvioPosterCard(
                         )
                     }
                 }
-            }
-
-            // Backend flags this browse item as having no playable/queueable stream.
-            // Dim the poster (mirrors NuvioTV's ~0.55 black alpha) while still showing it.
-            if (isStreamUnavailable) {
-                Box(
-                    modifier = Modifier
-                        .matchParentSize()
-                        .background(Color.Black.copy(alpha = 0.55f)),
-                )
             }
 
             NuvioPosterWatchedOverlay(isWatched = isWatched)

@@ -7,6 +7,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -32,11 +33,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.core.ui.AggregatedRatingsRow
 import com.nuvio.app.core.ui.unifyAggregatedRatings
 import com.nuvio.app.features.details.MetaDetails
 import com.nuvio.app.features.details.formatRuntimeForDisplay
 import com.nuvio.app.features.details.formatMetaReleaseLineForDetails
+import com.nuvio.app.features.streams.CatalogPrewarmService
 import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.stringResource
 
@@ -55,6 +58,14 @@ fun DetailMetaInfo(
         val runtimeText = formatRuntimeForDisplay(meta.runtime)
         val ageBadge = meta.ageRating?.trim()?.takeIf { it.isNotBlank() }
 
+        // "No streams" gate. The details /meta payload carries no streamStatus, so the details
+        // screen's authoritative availability signal is the prewarm stream-presence hint (the same
+        // one that gates the Download button): an explicit has_streams:false means no playable/
+        // queueable stream exists. Fail-open — only an explicit false shows the pill.
+        val streamPresence by CatalogPrewarmService.streamPresence.collectAsStateWithLifecycle()
+        val presenceKey = CatalogPrewarmService.cacheHintKey(meta.type, meta.id)
+        val isStreamUnavailable = streamPresence[presenceKey] == false
+
         // Unify ALL ratings into one deduped set, mirroring NuvioTV's HeroSection. Fold the
         // inline meta.imdbRating into the aggregated (/catalog-addon/ratings → externalRatings)
         // set, but never duplicate imdb: prefer the aggregated imdb value when present, else
@@ -69,7 +80,8 @@ fun DetailMetaInfo(
         val hasMetaRow = releaseLine != null ||
             runtimeText != null ||
             ageBadge != null ||
-            showRatingsInline
+            showRatingsInline ||
+            isStreamUnavailable
         if (hasMetaRow) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -93,6 +105,11 @@ fun DetailMetaInfo(
                 }
                 ageBadge?.let { badge ->
                     DetailHeroMetaBadge(text = badge)
+                }
+                // No playable/queueable stream for this title → surface a muted error pill beside
+                // the release/age row (mirrors the home hero's "No streams" pill).
+                if (isStreamUnavailable) {
+                    DetailNoStreamsPill()
                 }
                 // Single rating → inline on the genre/year row.
                 if (showRatingsInline) {
@@ -201,6 +218,35 @@ private fun DetailHeroMetaBadge(
             text = text,
             style = MaterialTheme.typography.labelMedium,
             color = contentColor,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun DetailNoStreamsPill() {
+    // Same pill shape/size/typography as DetailHeroMetaBadge, tinted with the theme error color
+    // (muted background + solid border/text) rather than a hardcoded palette.
+    val errorColor = MaterialTheme.colorScheme.error
+    Box(
+        modifier = Modifier
+            .background(
+                color = errorColor.copy(alpha = 0.12f),
+                shape = RoundedCornerShape(6.dp),
+            )
+            .border(
+                border = BorderStroke(1.dp, errorColor.copy(alpha = 0.55f)),
+                shape = RoundedCornerShape(6.dp),
+            )
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = stringResource(Res.string.meta_no_streams_pill),
+            style = MaterialTheme.typography.labelMedium,
+            color = errorColor,
+            fontWeight = FontWeight.SemiBold,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )

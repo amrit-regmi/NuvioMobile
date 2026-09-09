@@ -1,6 +1,8 @@
 package com.nuvio.app.features.home.components
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -56,6 +58,7 @@ import com.nuvio.app.core.ui.AggregatedRatingsRow
 import com.nuvio.app.core.ui.unifyAggregatedRatings
 import com.nuvio.app.features.details.MetaExternalRating
 import com.nuvio.app.features.home.MetaPreview
+import com.nuvio.app.features.home.StreamStatus
 import com.nuvio.app.features.home.stableKey
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -437,6 +440,11 @@ private fun HeroContentBlock(
                 HeroMetaDot()
                 HeroMetaText(text = formatReleaseDateForDisplay(info))
             }
+            // Backend flagged this title as having no playable/queueable stream → surface a
+            // muted error pill beside the release row (mirrors the details panel).
+            if (item.streamStatus == StreamStatus.UNAVAILABLE) {
+                HeroNoStreamsPill()
+            }
             // Single rating → inline on the type/genre/year row (matches DetailMetaInfo).
             if (showRatingsInline) {
                 HeroMetaDot()
@@ -465,6 +473,35 @@ private fun HeroMetaText(text: String) {
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
     )
+}
+
+@Composable
+private fun HeroNoStreamsPill() {
+    // Muted error-tinted pill (theme error color, not a hardcoded palette) shown beside the hero
+    // meta row when a title has no streams. Mirrors DetailMetaInfo's DetailNoStreamsPill.
+    val errorColor = MaterialTheme.colorScheme.error
+    Box(
+        modifier = Modifier
+            .background(
+                color = errorColor.copy(alpha = 0.12f),
+                shape = RoundedCornerShape(6.dp),
+            )
+            .border(
+                border = BorderStroke(1.dp, errorColor.copy(alpha = 0.55f)),
+                shape = RoundedCornerShape(6.dp),
+            )
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = stringResource(Res.string.meta_no_streams_pill),
+            style = MaterialTheme.typography.labelMedium,
+            color = errorColor,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
 }
 
 internal fun homeHeroLayout(

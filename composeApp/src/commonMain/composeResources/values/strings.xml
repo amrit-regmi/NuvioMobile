@@ -1230,6 +1230,7 @@
     <string name="home_empty_no_rows_message">Installed addons do not currently expose board-compatible catalogs without required extras.</string>
     <string name="home_empty_no_rows_title">No home rows available</string>
     <string name="home_view_details">View Details</string>
+    <string name="meta_no_streams_pill">No streams</string>
     <string name="meta_section_actions_description">Play and save controls.</string>
     <string name="meta_section_actions_title">Actions</string>
     <string name="meta_section_cast_description">Principal cast list.</string>
