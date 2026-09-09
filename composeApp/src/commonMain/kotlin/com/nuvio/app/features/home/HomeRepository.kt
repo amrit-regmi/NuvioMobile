@@ -236,6 +236,58 @@ object HomeRepository {
     }
 
     /**
+     * Updates the [StreamStatus] of a single title across ALL cached home state (built-in/addon
+     * catalog rows, reco rows, and the collection-hero pool), then republishes so the grid chip /
+     * hero pill reflects real availability immediately.
+     *
+     * `streamStatus` is DYNAMIC (the backend recomputes it on every fetch and sends `no-store`), so
+     * a value baked into a cached row can go stale. This is called from the stream-resolve path
+     * (see App.kt's CatalogPrewarmService.completions observer): once the app has actually resolved
+     * streams for a title it KNOWS the true availability and overwrites the possibly-stale cached
+     * value — the user's "auto-update the tag when streams resolve" ask.
+     *
+     * No-op for [StreamStatus.UNKNOWN] (never overwrite a known value with unknown) and when the
+     * title isn't present in any cached row (nothing to update). Matching is by normalized type +
+     * id so a "series"/"tv"/"show" row still matches the normalized "series" resolve.
+     */
+    fun updateStreamStatus(type: String, id: String, status: StreamStatus) {
+        if (status == StreamStatus.UNKNOWN) return
+        val normalizedType = normalizeStreamStatusType(type) ?: return
+        val targetId = id.trim()
+        if (targetId.isBlank()) return
+
+        var changed = false
+        fun List<MetaPreview>.applied(): List<MetaPreview> = map { item ->
+            if (item.id == targetId &&
+                normalizeStreamStatusType(item.type) == normalizedType &&
+                item.streamStatus != status
+            ) {
+                changed = true
+                item.copy(streamStatus = status)
+            } else {
+                item
+            }
+        }
+
+        val nextSections = cachedSections.mapValues { (_, section) ->
+            section.copy(items = section.items.applied())
+        }
+        val nextRecoSections = cachedRecoSections.mapValues { (_, section) ->
+            section.copy(items = section.items.applied())
+        }
+        val nextCollectionHero = cachedCollectionHeroItems.applied()
+        if (!changed) return
+
+        cachedSections = nextSections
+        cachedRecoSections = nextRecoSections
+        cachedCollectionHeroItems = nextCollectionHero
+        publishCurrentState(
+            isLoading = _uiState.value.isLoading,
+            requestKey = activeRequestKey ?: lastRequestKey,
+        )
+    }
+
+    /**
      * Lazily fetches the aggregated rating set for a hero [item] (the active pager page) and stores
      * it in [heroRatings] keyed by the item's stable key. No-op when ratings are already present,
      * a fetch is in flight, MDBList is disabled, or the item has no imdb id. Failures are swallowed
@@ -553,6 +605,18 @@ private const val HOME_COLLECTION_HERO_SOURCE_ITEM_LIMIT = 8
 private const val HOME_CATALOG_FETCH_BATCH_SIZE = 4
 private const val HOME_CATALOG_PREVIEW_FETCH_LIMIT = 18
 private const val HOME_CATALOG_PUBLISH_INTERVAL = 2
+
+/**
+ * Normalizes a content type to the canonical "movie"/"series" form used by the stream-resolve
+ * path, or null for anything else. Keeps [HomeRepository.updateStreamStatus] matching robust when
+ * a catalog row carries "tv"/"show"/"film" instead of the canonical spelling.
+ */
+internal fun normalizeStreamStatusType(type: String): String? =
+    when (type.trim().lowercase()) {
+        "movie", "film" -> "movie"
+        "series", "show", "tv", "tvshow" -> "series"
+        else -> null
+    }
 
 private fun prioritizeDefinitions(
     definitions: List<HomeCatalogDefinition>,

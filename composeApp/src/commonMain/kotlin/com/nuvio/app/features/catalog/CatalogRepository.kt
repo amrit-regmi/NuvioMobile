@@ -6,7 +6,9 @@ import com.nuvio.app.features.collection.catalogRouteKey
 import com.nuvio.app.features.library.LibraryRepository
 import com.nuvio.app.features.library.toMetaPreview
 import com.nuvio.app.features.home.HomeCatalogSettingsRepository
+import com.nuvio.app.features.home.StreamStatus
 import com.nuvio.app.features.home.filterReleasedItems
+import com.nuvio.app.features.home.normalizeStreamStatusType
 import com.nuvio.app.features.trakt.TraktPublicListSourceResolver
 import com.nuvio.app.features.watchprogress.CurrentDateProvider
 import kotlinx.coroutines.CoroutineScope
@@ -188,6 +190,38 @@ object CatalogRepository {
                 },
             )
         }
+    }
+
+    /**
+     * Updates the [StreamStatus] of a single title in the currently-loaded full-catalog grid, then
+     * republishes so the "No streams" corner chip clears/appears immediately. `streamStatus` is
+     * DYNAMIC (backend recomputes per fetch, `no-store`), so a value baked into a paginated/cached
+     * row can go stale; the stream-resolve path (App.kt) calls this once it knows the real
+     * availability. No-op for [StreamStatus.UNKNOWN] and when the title isn't on screen. Matching
+     * is by normalized type + id (a "tv"/"show" row still matches a normalized "series" resolve).
+     */
+    fun updateStreamStatus(type: String, id: String, status: StreamStatus) {
+        if (status == StreamStatus.UNKNOWN) return
+        val normalizedType = normalizeStreamStatusType(type) ?: return
+        val targetId = id.trim()
+        if (targetId.isBlank()) return
+
+        val current = _uiState.value
+        if (current.items.isEmpty()) return
+        var changed = false
+        val updatedItems = current.items.map { item ->
+            if (item.id == targetId &&
+                normalizeStreamStatusType(item.type) == normalizedType &&
+                item.streamStatus != status
+            ) {
+                changed = true
+                item.copy(streamStatus = status)
+            } else {
+                item
+            }
+        }
+        if (!changed) return
+        _uiState.value = current.copy(items = updatedItems)
     }
 
     private fun catalogRequest(target: CatalogTarget): CatalogRequest =

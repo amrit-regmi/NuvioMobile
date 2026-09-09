@@ -7,7 +7,9 @@ import com.nuvio.app.features.addons.buildAddonResourceUrl
 import com.nuvio.app.features.addons.enabledAddons
 import com.nuvio.app.features.addons.httpGetText
 import com.nuvio.app.features.home.HomeCatalogSettingsRepository
+import com.nuvio.app.features.home.StreamStatus
 import com.nuvio.app.features.home.filterReleasedItems
+import com.nuvio.app.features.home.normalizeStreamStatusType
 import com.nuvio.app.features.mdblist.MdbListMetadataService
 import com.nuvio.app.features.mdblist.MdbListSettingsRepository
 import com.nuvio.app.features.tmdb.TmdbMetadataService
@@ -192,6 +194,45 @@ object MetaDetailsRepository {
         activeRequestKey = null
         cachedMetaByRequestKey.clear()
         _uiState.value = MetaDetailsUiState()
+    }
+
+    /**
+     * Updates the [StreamStatus] on the currently-displayed details meta (and any in-memory cached
+     * meta for the same title) so the details "No streams" pill clears/appears immediately when the
+     * app resolves streams for it. streamStatus is DYNAMIC and served `no-store`, so a value baked
+     * into the in-memory meta cache can go stale across re-opens; the stream-resolve path (App.kt)
+     * calls this with the authoritative result. No-op for [StreamStatus.UNKNOWN]. Matching is by
+     * normalized type + base id (series details are keyed by the base id, not id:S:E).
+     */
+    fun updateStreamStatus(type: String, id: String, status: StreamStatus) {
+        if (status == StreamStatus.UNKNOWN) return
+        val normalizedType = normalizeStreamStatusType(type) ?: return
+        val targetId = id.trim()
+        if (targetId.isBlank()) return
+
+        fun MetaDetails.matches(): Boolean =
+            this.id == targetId && normalizeStreamStatusType(this.type) == normalizedType
+
+        // Update every cached entry (base + meta-screen enriched) for the matching title.
+        cachedMetaByRequestKey.keys.toList().forEach { key ->
+            val entry = cachedMetaByRequestKey[key] ?: return@forEach
+            val newBase = entry.baseMeta.takeIf { it.matches() && it.streamStatus != status }
+                ?.copy(streamStatus = status)
+            val newScreen = entry.metaScreenMeta?.takeIf { it.matches() && it.streamStatus != status }
+                ?.copy(streamStatus = status)
+            if (newBase != null || newScreen != null) {
+                cachedMetaByRequestKey[key] = entry.copy(
+                    baseMeta = newBase ?: entry.baseMeta,
+                    metaScreenMeta = newScreen ?: entry.metaScreenMeta,
+                )
+            }
+        }
+
+        // Update the live details meta if it is the one on screen.
+        val liveMeta = _uiState.value.meta
+        if (liveMeta != null && liveMeta.matches() && liveMeta.streamStatus != status) {
+            _uiState.value = _uiState.value.copy(meta = liveMeta.copy(streamStatus = status))
+        }
     }
 
     suspend fun fetch(type: String, id: String, cacheResult: Boolean = true): MetaDetails? {

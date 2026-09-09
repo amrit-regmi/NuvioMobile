@@ -44,8 +44,20 @@ object CatalogPrewarmService {
     /** Dedup guard: prewarm keys (type/video_id) currently in flight. */
     private val inFlight = mutableSetOf<String>()
 
-    /** A finished prewarm. videoId is the raw form passed to [prewarm] ("tt123" or "tt123:S:E"). */
-    data class PrewarmCompletion(val type: String, val videoId: String, val warmed: Boolean, val subsReady: Boolean)
+    /**
+     * A finished prewarm. videoId is the raw form passed to [prewarm] ("tt123" or "tt123:S:E").
+     * [warmed] = a cached/playable stream exists (Tier-1). [hasStreams] = the title has AT LEAST
+     * one known stream (cached or not); false only when the backend explicitly reported zero
+     * streams. Together they let observers refresh a catalog tile's streamStatus live (see
+     * App.kt): warmed→INSTANT, else hasStreams→QUEUEABLE, else UNAVAILABLE.
+     */
+    data class PrewarmCompletion(
+        val type: String,
+        val videoId: String,
+        val warmed: Boolean,
+        val subsReady: Boolean,
+        val hasStreams: Boolean,
+    )
 
     private val _completions = MutableSharedFlow<PrewarmCompletion>(extraBufferCapacity = 16)
     /** Emitted whenever a prewarm POST returns successfully. Observers can refresh the stream list. */
@@ -132,6 +144,7 @@ object CatalogPrewarmService {
                         videoId = id,
                         warmed = warmed,
                         subsReady = body.contains("\"subs_ready\":true"),
+                        hasStreams = hasStreams,
                     ),
                 )
             } catch (e: CancellationException) {

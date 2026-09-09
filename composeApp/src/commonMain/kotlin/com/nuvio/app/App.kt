@@ -137,8 +137,10 @@ import com.nuvio.app.features.details.PersonDetailScreen
 import com.nuvio.app.features.details.TmdbEntityBrowseScreen
 import com.nuvio.app.features.tmdb.TmdbEntityKind
 import com.nuvio.app.features.home.HomeCatalogSection
+import com.nuvio.app.features.home.HomeRepository
 import com.nuvio.app.features.home.HomeScreen
 import com.nuvio.app.features.home.MetaPreview
+import com.nuvio.app.features.home.StreamStatus
 import com.nuvio.app.features.library.LibraryItem
 import com.nuvio.app.features.library.LibraryRepository
 import com.nuvio.app.features.library.LibrarySection
@@ -911,6 +913,22 @@ private fun MainAppContent(
     LaunchedEffect(Unit) {
         CatalogPrewarmService.completions.collect { done ->
             StreamsRepository.refreshAfterPrewarm(done.type, done.videoId)
+            // Auto-update the catalog "No streams" tag from a real resolve. streamStatus is
+            // DYNAMIC (backend recomputes per fetch, no-store), so a stale UNAVAILABLE can be
+            // baked into a cached grid/hero tile even when cached streams now exist. The prewarm
+            // just resolved this title on the backend, so use its authoritative signal to overwrite
+            // the possibly-stale value on-screen: warmed → INSTANT, else a known stream exists →
+            // QUEUEABLE, else the backend saw zero streams → UNAVAILABLE. The videoId is the raw
+            // form ("tt123" or "tt123:S:E"); catalog tiles key on the base id, so strip S:E.
+            val baseId = done.videoId.substringBefore(':')
+            val resolvedStatus = when {
+                done.warmed -> StreamStatus.INSTANT
+                done.hasStreams -> StreamStatus.QUEUEABLE
+                else -> StreamStatus.UNAVAILABLE
+            }
+            HomeRepository.updateStreamStatus(done.type, baseId, resolvedStatus)
+            CatalogRepository.updateStreamStatus(done.type, baseId, resolvedStatus)
+            MetaDetailsRepository.updateStreamStatus(done.type, baseId, resolvedStatus)
         }
     }
 
