@@ -53,6 +53,7 @@ import com.nuvio.app.core.ui.rememberPosterCardStyleUiState
 import com.nuvio.app.core.ui.posterCardClickable
 import com.nuvio.app.core.ui.nuvioSafeBottomPadding
 import com.nuvio.app.core.ui.withDuplicateSafeLazyKeys
+import com.nuvio.app.features.downloads.DownloadsRepository
 import com.nuvio.app.features.home.MetaPreview
 import com.nuvio.app.features.home.HomeCatalogSettingsRepository
 import com.nuvio.app.features.home.PosterShape
@@ -281,6 +282,11 @@ private fun CatalogPosterTile(
     onClick: (() -> Unit)? = null,
     onLongClick: (() -> Unit)? = null,
 ) {
+    // Offline-available (downloaded) titles play regardless of the backend stream status, so
+    // suppress the "No streams" chip for them. Reads local downloads state only (no network).
+    val downloadedContentIds by DownloadsRepository.downloadedContentIds.collectAsStateWithLifecycle()
+    val isDownloaded = downloadedContentIds.contains(DownloadsRepository.baseContentId(item.id))
+
     Column(
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -302,24 +308,46 @@ private fun CatalogPosterTile(
             }
             NuvioPosterWatchedOverlay(isWatched = isWatched)
 
-            // Compact "No streams" corner chip — poster stays full color (no dim/overlay),
-            // shown only when the backend flagged the item as having no playable/queueable stream.
-            if (item.streamStatus == StreamStatus.UNAVAILABLE) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(6.dp)
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(Color.Black.copy(alpha = 0.72f))
-                        .padding(horizontal = 6.dp, vertical = 3.dp),
-                ) {
-                    Text(
-                        text = stringResource(Res.string.meta_no_streams_pill),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color.White,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+            // Compact corner chip. Poster stays full color (no dim/overlay). A downloaded
+            // (offline-playable) title shows a "Downloaded" chip and NEVER "No streams" — offline
+            // content plays regardless of the backend stream status. Otherwise "No streams" shows
+            // only when the backend flagged the item as having no playable/queueable stream.
+            when {
+                item.streamStatus == StreamStatus.UNAVAILABLE && isDownloaded -> {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(6.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.9f))
+                            .padding(horizontal = 6.dp, vertical = 3.dp),
+                    ) {
+                        Text(
+                            text = stringResource(Res.string.meta_downloaded_pill),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+                item.streamStatus == StreamStatus.UNAVAILABLE -> {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(6.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color.Black.copy(alpha = 0.72f))
+                            .padding(horizontal = 6.dp, vertical = 3.dp),
+                    ) {
+                        Text(
+                            text = stringResource(Res.string.meta_no_streams_pill),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                 }
             }
         }

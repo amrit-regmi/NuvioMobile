@@ -1,10 +1,16 @@
 package com.nuvio.app.features.downloads
 
 import com.nuvio.app.features.streams.StreamItem
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
@@ -16,6 +22,32 @@ import org.jetbrains.compose.resources.getString
 object DownloadsRepository {
     private val _uiState = MutableStateFlow(DownloadsUiState())
     val uiState: StateFlow<DownloadsUiState> = _uiState.asStateFlow()
+
+    private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    /**
+     * Reactive set of BASE content ids (series/movie meta id, any `:season:episode` suffix
+     * stripped) for every download that is playable offline (Completed with a local file). A
+     * series is present if ANY of its episodes is offline-playable.
+     *
+     * Local-only + offline-safe: derived purely from [uiState] (on-disk downloads state), never
+     * touches the network. Cards / hero / details observe this to suppress the "No streams"
+     * indicator for on-device content regardless of the backend stream status.
+     */
+    val downloadedContentIds: StateFlow<Set<String>> =
+        _uiState
+            .map { state -> state.items.toDownloadedBaseContentIds() }
+            .stateIn(repositoryScope, SharingStarted.Eagerly, emptySet())
+
+    /** Strip a trailing `:season:episode` so an episode id collapses onto its series/movie base id. */
+    fun baseContentId(id: String): String = id.trim().replace(EPISODE_ID_SUFFIX, "")
+
+    private fun List<DownloadItem>.toDownloadedBaseContentIds(): Set<String> =
+        asSequence()
+            .filter { it.isPlayable }
+            .map { baseContentId(it.parentMetaId) }
+            .filter { it.isNotBlank() }
+            .toSet()
 
     private val activeHandles = mutableMapOf<String, DownloadsTaskHandle>()
     private var hasLoaded = false
@@ -420,6 +452,8 @@ object DownloadsRepository {
                 destinationFileName = fileName,
             ) != null
 }
+
+private val EPISODE_ID_SUFFIX = Regex(""":\d+:\d+$""")
 
 @Serializable
 private data class StoredDownloadsPayload(

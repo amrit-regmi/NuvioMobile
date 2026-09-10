@@ -31,6 +31,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -57,6 +58,7 @@ import com.nuvio.app.core.format.formatReleaseDateForDisplay
 import com.nuvio.app.core.ui.AggregatedRatingsRow
 import com.nuvio.app.core.ui.unifyAggregatedRatings
 import com.nuvio.app.features.details.MetaExternalRating
+import com.nuvio.app.features.downloads.DownloadsRepository
 import com.nuvio.app.features.home.MetaPreview
 import com.nuvio.app.features.home.StreamStatus
 import com.nuvio.app.features.home.stableKey
@@ -372,6 +374,11 @@ private fun HeroContentBlock(
     }
     val logoUrl = item.logo?.takeIf { it.isNotBlank() }
 
+    // Offline-available (downloaded) titles play regardless of the backend stream status, so
+    // suppress the "No streams" pill for them. Reads local downloads state only (no network).
+    val downloadedContentIds by DownloadsRepository.downloadedContentIds.collectAsState()
+    val isDownloaded = downloadedContentIds.contains(DownloadsRepository.baseContentId(item.id))
+
     // Same unification rule as the details screen (DetailMetaInfo): fold the inline imdbRating
     // into the aggregated set, dedupe on imdb, then a SINGLE rating renders inline on the meta
     // row and TWO OR MORE get their own row. The aggregated set arrives asynchronously — until it
@@ -440,10 +447,13 @@ private fun HeroContentBlock(
                 HeroMetaDot()
                 HeroMetaText(text = formatReleaseDateForDisplay(info))
             }
-            // Backend flagged this title as having no playable/queueable stream → surface a
-            // muted error pill beside the release row (mirrors the details panel).
-            if (item.streamStatus == StreamStatus.UNAVAILABLE) {
-                HeroNoStreamsPill()
+            // Backend flagged this title as having no playable/queueable stream → surface a muted
+            // error pill beside the release row (mirrors the details panel). A downloaded
+            // (offline-playable) title shows a "Downloaded" pill instead and NEVER "No streams" —
+            // offline content plays regardless of the backend stream status.
+            when {
+                item.streamStatus == StreamStatus.UNAVAILABLE && isDownloaded -> HeroDownloadedPill()
+                item.streamStatus == StreamStatus.UNAVAILABLE -> HeroNoStreamsPill()
             }
             // Single rating → inline on the type/genre/year row (matches DetailMetaInfo).
             if (showRatingsInline) {
@@ -473,6 +483,35 @@ private fun HeroMetaText(text: String) {
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
     )
+}
+
+@Composable
+private fun HeroDownloadedPill() {
+    // Accent-tinted pill (theme primary color) shown beside the hero meta row for a title that is
+    // available offline. Mirrors HeroNoStreamsPill's shape/size. Replaces the "No streams" pill.
+    val accentColor = MaterialTheme.colorScheme.primary
+    Box(
+        modifier = Modifier
+            .background(
+                color = accentColor.copy(alpha = 0.12f),
+                shape = RoundedCornerShape(6.dp),
+            )
+            .border(
+                border = BorderStroke(1.dp, accentColor.copy(alpha = 0.55f)),
+                shape = RoundedCornerShape(6.dp),
+            )
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = stringResource(Res.string.meta_downloaded_pill),
+            style = MaterialTheme.typography.labelMedium,
+            color = accentColor,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
 }
 
 @Composable

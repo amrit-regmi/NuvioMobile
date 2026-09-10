@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.home_view_all
+import nuvio.composeapp.generated.resources.meta_downloaded_pill
 import nuvio.composeapp.generated.resources.meta_no_streams_pill
 import nuvio.composeapp.generated.resources.poster_logo_content_description
 import org.jetbrains.compose.resources.stringResource
@@ -114,6 +115,7 @@ fun NuvioPosterCard(
     bottomLeftText: String? = null,
     isWatched: Boolean = false,
     streamUnavailable: Boolean = false,
+    isDownloaded: Boolean = false,
     onClick: (() -> Unit)? = null,
     onLongClick: (() -> Unit)? = null,
 ) {
@@ -189,10 +191,17 @@ fun NuvioPosterCard(
 
             NuvioPosterWatchedOverlay(isWatched = isWatched)
 
-            // Small "No streams" corner chip — poster art stays full color (no dim/overlay);
-            // shown only when the backend flagged this item as having no playable/queueable stream.
-            if (streamUnavailable) {
-                NuvioPosterStreamUnavailableChip(
+            // Small corner chip. Poster art stays full color (no dim/overlay). If the title is
+            // downloaded (playable offline) we show a "Downloaded" chip and NEVER the "No streams"
+            // chip — offline content plays regardless of the backend stream status. Otherwise the
+            // "No streams" chip shows only when the backend flagged no playable/queueable stream.
+            when {
+                isDownloaded && streamUnavailable -> NuvioPosterDownloadedChip(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(NuvioTokens.Space.s6),
+                )
+                streamUnavailable -> NuvioPosterStreamUnavailableChip(
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .padding(NuvioTokens.Space.s6),
@@ -236,6 +245,27 @@ private fun NuvioPosterStreamUnavailableChip(
     ) {
         Text(
             text = stringResource(Res.string.meta_no_streams_pill),
+            style = MaterialTheme.typography.labelSmall,
+            color = Color.White,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun NuvioPosterDownloadedChip(
+    modifier: Modifier = Modifier,
+) {
+    val tokens = MaterialTheme.nuvio
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(tokens.colors.accent.copy(alpha = 0.9f))
+            .padding(horizontal = 6.dp, vertical = 3.dp),
+    ) {
+        Text(
+            text = stringResource(Res.string.meta_downloaded_pill),
             style = MaterialTheme.typography.labelSmall,
             color = Color.White,
             maxLines = 1,

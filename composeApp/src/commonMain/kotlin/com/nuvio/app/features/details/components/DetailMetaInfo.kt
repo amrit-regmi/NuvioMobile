@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -36,6 +37,7 @@ import androidx.compose.ui.unit.sp
 import com.nuvio.app.core.ui.AggregatedRatingsRow
 import com.nuvio.app.core.ui.unifyAggregatedRatings
 import com.nuvio.app.features.details.MetaDetails
+import com.nuvio.app.features.downloads.DownloadsRepository
 import com.nuvio.app.features.details.formatRuntimeForDisplay
 import com.nuvio.app.features.details.formatMetaReleaseLineForDetails
 import com.nuvio.app.features.home.StreamStatus
@@ -59,8 +61,15 @@ fun DetailMetaInfo(
 
         // "No streams" gate. The backend attaches streamStatus to /meta (catalog/main.py); an
         // UNAVAILABLE value means no playable/queueable stream exists. Fail-open — only an explicit
-        // UNAVAILABLE shows the pill (UNKNOWN/missing is treated as available).
-        val isStreamUnavailable = meta.streamStatus == StreamStatus.UNAVAILABLE
+        // UNAVAILABLE shows the pill (UNKNOWN/missing is treated as available). A downloaded
+        // (offline-playable) title plays regardless of the backend status, so it NEVER shows
+        // "No streams" and instead surfaces a "Downloaded" pill. Reads local downloads state only
+        // (no network) so it stays correct fully offline.
+        val downloadedContentIds by DownloadsRepository.downloadedContentIds.collectAsState()
+        val isDownloaded = downloadedContentIds.contains(DownloadsRepository.baseContentId(meta.id))
+        val backendStreamUnavailable = meta.streamStatus == StreamStatus.UNAVAILABLE
+        val isStreamUnavailable = backendStreamUnavailable && !isDownloaded
+        val showDownloadedPill = backendStreamUnavailable && isDownloaded
 
         // Unify ALL ratings into one deduped set, mirroring NuvioTV's HeroSection. Fold the
         // inline meta.imdbRating into the aggregated (/catalog-addon/ratings → externalRatings)
@@ -77,7 +86,8 @@ fun DetailMetaInfo(
             runtimeText != null ||
             ageBadge != null ||
             showRatingsInline ||
-            isStreamUnavailable
+            isStreamUnavailable ||
+            showDownloadedPill
         if (hasMetaRow) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -106,6 +116,10 @@ fun DetailMetaInfo(
                 // the release/age row (mirrors the home hero's "No streams" pill).
                 if (isStreamUnavailable) {
                     DetailNoStreamsPill()
+                }
+                // Downloaded / available offline → accent pill in place of the "No streams" pill.
+                if (showDownloadedPill) {
+                    DetailDownloadedPill()
                 }
                 // Single rating → inline on the genre/year row.
                 if (showRatingsInline) {
@@ -214,6 +228,35 @@ private fun DetailHeroMetaBadge(
             text = text,
             style = MaterialTheme.typography.labelMedium,
             color = contentColor,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun DetailDownloadedPill() {
+    // Same pill shape/size/typography as DetailNoStreamsPill, tinted with the theme primary
+    // (accent) color to signal the title is available offline.
+    val accentColor = MaterialTheme.colorScheme.primary
+    Box(
+        modifier = Modifier
+            .background(
+                color = accentColor.copy(alpha = 0.12f),
+                shape = RoundedCornerShape(6.dp),
+            )
+            .border(
+                border = BorderStroke(1.dp, accentColor.copy(alpha = 0.55f)),
+                shape = RoundedCornerShape(6.dp),
+            )
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = stringResource(Res.string.meta_downloaded_pill),
+            style = MaterialTheme.typography.labelMedium,
+            color = accentColor,
+            fontWeight = FontWeight.SemiBold,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
