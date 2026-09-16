@@ -965,21 +965,16 @@ internal fun StreamList(
         verticalArrangement = Arrangement.spacedBy(0.dp),
     ) {
         when {
-            hasGroups && anyLoading && !hasAnyStreams -> {
+            // Any loading in progress with nothing to show yet — initial load, a reload,
+            // or the backend still scraping this title (scrapePending). Kept as a single
+            // branch so re-fetches never flash the empty state between cycles.
+            !hasAnyStreams && (anyLoading || uiState.isAnyLoading || uiState.scrapePending) -> {
                 item {
                     LoadingStateBlock()
                 }
             }
 
-            // Backend is still scraping this title: keep the loading state (the screen
-            // auto-polls it in) instead of flashing "No streams found".
-            !hasAnyStreams && !uiState.isAnyLoading && uiState.scrapePending -> {
-                item {
-                    LoadingStateBlock()
-                }
-            }
-
-            !hasAnyStreams && !uiState.isAnyLoading -> {
+            !hasAnyStreams -> {
                 item {
                     EmptyStateBlock(reason = uiState.emptyStateReason)
                 }

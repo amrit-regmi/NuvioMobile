@@ -295,7 +295,10 @@ object StreamsRepository {
         lastLoadParams = LoadParams(type, videoId, parentMetaId, season, episode, manualSelection)
         activeRequestKey = requestKey
         activeJob?.cancel()
-        _uiState.value = StreamsUiState(requestToken = requestToken)
+        // Seed the reset with isAnyLoading=true so a reload (incl. the scrape auto-poll's
+        // re-fetch) shows the loading state for the whole cycle instead of briefly
+        // flashing the empty state before the addon jobs flip loading on.
+        _uiState.value = StreamsUiState(requestToken = requestToken, isAnyLoading = true)
 
         // Promote any stream that gets debrid-resolved in the background (StreamWarmer) WHILE this
         // list is open to a ready/"Tier-1" state by swapping in its resolved direct url — so the
