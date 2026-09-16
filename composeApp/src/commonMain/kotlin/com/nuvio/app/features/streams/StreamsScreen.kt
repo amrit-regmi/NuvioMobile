@@ -42,7 +42,6 @@ import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.CloudDownload
-import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.SearchOff
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -94,6 +93,8 @@ import com.nuvio.app.features.debrid.SharedTorboxKeyService
 import com.nuvio.app.features.debrid.toastMessage
 import com.nuvio.app.features.player.PlayerSettingsRepository
 import com.nuvio.app.features.watchprogress.WatchProgressRepository
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 import nuvio.composeapp.generated.resources.*
@@ -158,7 +159,6 @@ fun StreamsScreen(
     // Pre-resolved toast strings so we can show them off the composition thread post-await.
     val forceFetchWaitText = stringResource(Res.string.streams_force_fetch_wait)
     val forceFetchFailedText = stringResource(Res.string.streams_force_fetch_failed)
-    val forceFetchNoneText = stringResource(Res.string.streams_force_fetch_none)
     // Compose the SAME id the stream-list GET uses (series episodes need contentId:season:episode).
     val rescrapeVideoId = if (
         type.equals("series", ignoreCase = true) &&
@@ -209,6 +209,47 @@ fun StreamsScreen(
             episode = episodeNumber,
             manualSelection = manualSelection,
         )
+    }
+
+    // Scrape auto-poll: while the backend keeps signalling an in-flight on-demand scrape
+    // for this title (empty list + retry notice), re-fetch every ~4s until streams land
+    // or the budget elapses — so the user never has to manually retry. Bounded and keyed
+    // to the title, so it cancels the moment the displayed title/episode changes. Only
+    // runs when a scrape is actually running; a genuinely empty/covered/unreleased title
+    // settles to the empty state and this loop exits at once.
+    LaunchedEffect(type, videoId, seasonNumber, episodeNumber, manualSelection) {
+        val budgetMs = 75_000L
+        val scrapeIntervalMs = 4_000L
+        val settleTickMs = 500L
+        var elapsedMs = 0L
+        while (isActive && elapsedMs < budgetMs) {
+            val state = StreamsRepository.uiState.value
+            if (state.groups.any { it.streams.isNotEmpty() }) break
+            if (!state.scrapePending) {
+                // Not scraping: either still doing the initial load, or a settled empty
+                // state with no scrape running → stop polling in the latter case.
+                if (!state.isAnyLoading && state.emptyStateReason != null) break
+                delay(settleTickMs)
+                elapsedMs += settleTickMs
+                continue
+            }
+            delay(scrapeIntervalMs)
+            elapsedMs += scrapeIntervalMs
+            if (StreamsRepository.uiState.value.groups.any { it.streams.isNotEmpty() }) break
+            StreamsRepository.reload(
+                type = type,
+                videoId = videoId,
+                parentMetaId = parentMetaId,
+                season = seasonNumber,
+                episode = episodeNumber,
+                manualSelection = manualSelection,
+            )
+        }
+        // Budget exhausted with nothing found: drop the loading skeleton so the empty
+        // state shows (only if still on this title and no streams landed).
+        if (isActive && StreamsRepository.uiState.value.groups.none { it.streams.isNotEmpty() }) {
+            StreamsRepository.markScrapePollExhausted()
+        }
     }
 
     LaunchedEffect(uiState.groups, storedProgress?.providerAddonId, preferredFilterApplied) {
@@ -290,34 +331,9 @@ fun StreamsScreen(
                 contentColor = MaterialTheme.colorScheme.onBackground,
             )
 
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .background(
-                        color = MaterialTheme.colorScheme.background.copy(alpha = 0.45f),
-                        shape = CircleShape,
-                    )
-                    .clickable(
-                        onClick = {
-                            StreamsRepository.reload(
-                                type = type,
-                                videoId = videoId,
-                                parentMetaId = parentMetaId,
-                                season = seasonNumber,
-                                episode = episodeNumber,
-                                manualSelection = manualSelection,
-                            )
-                        },
-                    ),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.Refresh,
-                    contentDescription = stringResource(Res.string.streams_refresh),
-                    tint = MaterialTheme.colorScheme.onBackground,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
+            // The manual "Refresh" (retry) button was removed: the scrape auto-poll
+            // re-fetches on its own while the backend is still scraping, and "Force
+            // fetch" (below) is the single manual escalation.
 
             // Force fetch: triggers a fresh server-side re-scrape, then re-fetches the list so
             // newly-found hashes appear. Disabled while in-flight; 429 → "Please wait a moment".
@@ -337,7 +353,12 @@ fun StreamsScreen(
                             )
                             when (result) {
                                 is ForceRescrapeService.Result.Success -> {
-                                    // Always re-pull the list (cache cleared) so new hashes show.
+                                    // Re-pull the list (cache cleared) so new hashes show.
+                                    // The scrape often finishes a few seconds AFTER the
+                                    // rescrape POST returns, so we DON'T toast "none" here —
+                                    // the reload surfaces the backend's retry notice and the
+                                    // scrape auto-poll keeps the loading state up and re-fetches
+                                    // until streams land (or the budget elapses).
                                     StreamsRepository.reload(
                                         type = type,
                                         videoId = videoId,
@@ -346,9 +367,6 @@ fun StreamsScreen(
                                         episode = episodeNumber,
                                         manualSelection = manualSelection,
                                     )
-                                    if (!result.ok || result.added <= 0) {
-                                        NuvioToastController.show(forceFetchNoneText)
-                                    }
                                 }
                                 is ForceRescrapeService.Result.RateLimited ->
                                     NuvioToastController.show(forceFetchWaitText)
@@ -948,6 +966,14 @@ internal fun StreamList(
     ) {
         when {
             hasGroups && anyLoading && !hasAnyStreams -> {
+                item {
+                    LoadingStateBlock()
+                }
+            }
+
+            // Backend is still scraping this title: keep the loading state (the screen
+            // auto-polls it in) instead of flashing "No streams found".
+            !hasAnyStreams && !uiState.isAnyLoading && uiState.scrapePending -> {
                 item {
                     LoadingStateBlock()
                 }

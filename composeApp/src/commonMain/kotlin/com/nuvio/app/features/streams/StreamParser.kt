@@ -14,6 +14,22 @@ import kotlinx.serialization.json.longOrNull
 object StreamParser {
     private val json = Json { ignoreUnknownKeys = true }
 
+    /**
+     * True when the backend `/stream` payload carried an on-demand-scrape notice
+     * (`{"notice": {"retry": true, ...}}`). The backend emits this ONLY when a title
+     * was uncovered, a scrape was just fired, and the bounded wait expired with nothing
+     * cached yet — i.e. "streams are on their way, poll again shortly". A genuinely
+     * empty/covered/unreleased title carries no notice, so the caller can poll only
+     * while a scrape is really running.
+     */
+    fun hasScrapeNotice(payload: String): Boolean =
+        try {
+            val notice = json.parseToJsonElement(payload).jsonObject["notice"] as? JsonObject
+            notice?.get("retry")?.jsonPrimitive?.booleanOrNull == true
+        } catch (_: Exception) {
+            false
+        }
+
     fun parse(
         payload: String,
         addonName: String,

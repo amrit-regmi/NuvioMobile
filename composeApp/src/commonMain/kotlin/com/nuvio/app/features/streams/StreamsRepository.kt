@@ -91,6 +91,18 @@ object StreamsRepository {
     }
 
     /**
+     * Called by the screen's scrape auto-poll when its budget is exhausted with still no
+     * streams, so the UI drops the loading state and shows the empty state instead of
+     * spinning forever on a stale "scrape pending" flag.
+     */
+    fun markScrapePollExhausted() {
+        _uiState.update { current ->
+            if (current.groups.any { it.streams.isNotEmpty() } || !current.scrapePending) current
+            else current.copy(scrapePending = false)
+        }
+    }
+
+    /**
      * Called when the backend prewarm for [rawVideoId] completes. If the stream list currently on
      * screen is for that exact title/episode, replay the original load with forceRefresh so the
      * freshly-computed server fields (subtitleLanguages, audioLanguages, cacheStatus) appear in the
@@ -596,10 +608,16 @@ object StreamsRepository {
                         installedOrder = resolvedInstalledAddonOrder,
                     )
                     val anyLoading = updated.any { it.isLoading }
+                    // "A scrape is in flight": nothing rendered yet, no addon still
+                    // loading, and at least one addon returned an empty+retry notice.
+                    val scrapePending = !anyLoading &&
+                        updated.all { it.streams.isEmpty() } &&
+                        updated.any { it.scrapePending }
                     current.copy(
                         groups = updated,
                         isAnyLoading = anyLoading,
                         emptyStateReason = updated.toEmptyStateReason(anyLoading),
+                        scrapePending = scrapePending,
                     )
                 }
             }
@@ -781,20 +799,24 @@ object StreamsRepository {
                     val displayName = addon.addonName
                     val group = runCatchingUnlessCancelled {
                         val payload = httpGetText(url)
-                        StreamParser.parse(
+                        val streams = StreamParser.parse(
                             payload = payload,
                             addonName = displayName,
                             addonId = addon.addonId,
                             addonLogo = addon.manifest.logoUrl,
                         )
+                        // Backend on-demand-scrape signal: empty list + a retry notice
+                        // means "streams are being scraped now, poll again shortly".
+                        streams to (streams.isEmpty() && StreamParser.hasScrapeNotice(payload))
                     }.fold(
-                        onSuccess = { streams ->
-                            log.d { "Got ${streams.size} streams from ${displayName}" }
+                        onSuccess = { (streams, scrapePending) ->
+                            log.d { "Got ${streams.size} streams from ${displayName} (scrapePending=$scrapePending)" }
                             AddonStreamGroup(
                                 addonName = displayName,
                                 addonId = addon.addonId,
                                 streams = streams,
                                 isLoading = false,
+                                scrapePending = scrapePending,
                             )
                         },
                         onFailure = { err ->

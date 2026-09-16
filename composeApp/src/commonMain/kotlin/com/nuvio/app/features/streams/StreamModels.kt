@@ -332,6 +332,9 @@ data class AddonStreamGroup(
     val streams: List<StreamItem>,
     val isLoading: Boolean = false,
     val error: String? = null,
+    // True when this addon returned no streams but signalled an in-flight backend
+    // on-demand scrape (retry notice) — the list is being fetched server-side.
+    val scrapePending: Boolean = false,
 )
 
 enum class StreamsEmptyStateReason {
@@ -348,6 +351,10 @@ data class StreamsUiState(
     val selectedFilter: String? = null,
     val isAnyLoading: Boolean = false,
     val emptyStateReason: StreamsEmptyStateReason? = null,
+    // True while the list is empty but the backend is still scraping this title in the
+    // background (see AddonStreamGroup.scrapePending). The screen keeps a loading state
+    // and auto-polls instead of flashing "No streams found".
+    val scrapePending: Boolean = false,
     val autoPlayStream: StreamItem? = null,
     val autoPlayCandidates: List<StreamItem> = emptyList(),
     val isDirectAutoPlayFlow: Boolean = false,
