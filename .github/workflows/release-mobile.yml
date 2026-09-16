@@ -69,6 +69,13 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # Drop the obsolete "tools" package (default is "tools platform-tools").
+          # Google removed the legacy Android SDK Tools from the repo, so the runner's
+          # newer sdkmanager now fails on `sdkmanager tools` (exit 1) — which broke this
+          # step even though the app compiled fine before. platform-tools is enough;
+          # AGP auto-provisions platform-37/build-tools once licenses are accepted.
+          packages: platform-tools
 
       - name: Use the runner's x86_64 AAPT2 (drop the ARM64 build-box override)
         run: |
