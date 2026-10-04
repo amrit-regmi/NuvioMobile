@@ -1,0 +1,18 @@
+{
+  "name": "amrit-regmi apps",
+  "identifier": "io.github.amrit-regmi.sideload",
+  "sourceURL": "https://raw.githubusercontent.com/amrit-regmi/NuvioMobile/sideload-source/source.json",
+  "apps": [
+    {
+      "repo": "amrit-regmi/NuvioMobile",
+      "name": "CineX",
+      "developerName": "amrit-regmi",
+      "subtitle": "Private streaming client",
+      "localizedDescription": "CineX — private streaming client. Unsigned CI build, re-signed on device by SideStore.",
+      "icon": "iosApp/iosApp/Assets.xcassets/AppIcon.appiconset/app-icon-1024.png",
+      "tintColor": "1e1e1e",
+      "category": "entertainment",
+      "maxVersions": 5
+    }
+  ]
+}

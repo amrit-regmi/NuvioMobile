@@ -11,6 +11,11 @@ name: Release (CineX Mobile)
 #   NUVIO_RELEASE_KEY_ALIAS      signing key alias
 #   NUVIO_RELEASE_KEY_PASSWORD   signing key password
 # The release itself is published with the auto-provided GITHUB_TOKEN (no PAT needed).
+#
+# After the APK release is published, the unsigned iOS .ipa is built and attached to the
+# same release, then the SideStore source is regenerated so phones see the update. These
+# are chained here as jobs because a release created with GITHUB_TOKEN does not trigger
+# other workflows' `release` events.
 
 on:
   workflow_dispatch:
@@ -38,6 +43,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write          # create releases + upload assets
+    outputs:
+      tag: ${{ steps.ver.outputs.tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -146,3 +153,18 @@ jobs:
           files: ${{ steps.apk.outputs.path }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  ios:
+    needs: build
+    uses: ./.github/workflows/build-ios-unsigned.yml
+    with:
+      release_tag: ${{ needs.build.outputs.tag }}
+    secrets: inherit
+    permissions:
+      contents: write          # attach the .ipa to the release
+
+  sideload-source:
+    needs: ios
+    uses: ./.github/workflows/publish-sideload-source.yml
+    permissions:
+      contents: write          # push the sideload-source branch

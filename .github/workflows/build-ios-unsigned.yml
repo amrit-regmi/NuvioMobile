@@ -1,11 +1,13 @@
-name: Build iOS (unsigned, for AltServer sideload)
+name: Build iOS (unsigned, for SideStore sideload)
 
-# Produces an UNSIGNED .ipa of the Full flavour for the free-Apple-ID / AltServer-Linux
-# sideload path. CI does NOT sign — AltServer (on the Debian home server) re-signs the
-# .ipa with your free Apple ID at install time and auto-refreshes it every 7 days.
+# Produces an UNSIGNED .ipa of the Full flavour for the free-Apple-ID SideStore sideload
+# path. CI does NOT sign — SideStore re-signs the .ipa on the phone with your free Apple ID
+# at install time and refreshes it every 7 days.
 #
-# The .ipa is uploaded as a workflow ARTIFACT (not a public GitHub Release) because it is
-# an unsigned personal build. Download it on the home server via `gh run download`.
+# Standalone runs (dispatch / push to ci/ios-build) upload the .ipa as a workflow ARTIFACT.
+# When release-mobile.yml calls this with `release_tag`, the .ipa and a small
+# `<ipa>.json` metadata sidecar are also attached to that GitHub Release, where
+# publish-sideload-source.yml picks them up for the SideStore source.
 #
 # The Downloads widget / Live Activity extension is STRIPPED from the .ipa: free Apple IDs
 # cannot provision App Groups / ActivityKit entitlements, so leaving the .appex in would
@@ -24,14 +26,28 @@ on:
         type: choice
         options: ["full", "appstore"]
         default: "full"
+      release_tag:
+        description: "Optional: existing release tag to attach the .ipa to (e.g. v1.0.24-beta)"
+        type: string
+        default: ""
   # Push to the dedicated ci/ios-build branch to trigger a build without
   # placing this workflow on the default branch (main). Defaults to the Full
   # flavour (see DIST below) since push events carry no workflow inputs.
   push:
     branches: [ci/ios-build]
+  # Called by release-mobile.yml after the Android release is published.
+  workflow_call:
+    inputs:
+      release_tag:
+        description: "Existing release to attach the .ipa to"
+        type: string
+        default: ""
+      distribution:
+        type: string
+        default: "full"
 
 concurrency:
-  group: build-ios-${{ github.ref }}
+  group: build-ios-${{ github.ref }}-${{ inputs.release_tag || 'adhoc' }}
   cancel-in-progress: true
 
 jobs:
@@ -194,6 +210,45 @@ jobs:
           ls -lh "$RUNNER_TEMP/$OUT"
           echo "path=$RUNNER_TEMP/$OUT" >> "$GITHUB_OUTPUT"
           echo "name=$OUT" >> "$GITHUB_OUTPUT"
+          echo "plist=$WORK/Payload/$APPNAME/Info.plist" >> "$GITHUB_OUTPUT"
+
+      - name: Write sideload metadata sidecar
+        id: meta
+        env:
+          IPA: ${{ steps.ipa.outputs.path }}
+          PLIST: ${{ steps.ipa.outputs.plist }}
+        run: |
+          # The SideStore source must quote the exact CFBundleShortVersionString /
+          # CFBundleVersion of the .ipa, otherwise the update check never matches.
+          python3 - <<'PY'
+          import json, os, plistlib
+          ipa, plist = os.environ["IPA"], os.environ["PLIST"]
+          with open(plist, "rb") as f:
+              pl = plistlib.load(f)
+          meta = {
+              "bundleIdentifier": pl["CFBundleIdentifier"],
+              "version": pl["CFBundleShortVersionString"],
+              "buildVersion": str(pl["CFBundleVersion"]),
+              "minOSVersion": pl.get("MinimumOSVersion", ""),
+              "size": os.path.getsize(ipa),
+              "privacy": {k: v for k, v in pl.items() if k.endswith("UsageDescription")},
+          }
+          out = ipa + ".json"
+          with open(out, "w") as f:
+              json.dump(meta, f, indent=2)
+          print(json.dumps(meta, indent=2))
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"path={out}\n")
+          PY
+
+      - name: Attach .ipa to release
+        if: ${{ inputs.release_tag != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ inputs.release_tag }}" \
+            "${{ steps.ipa.outputs.path }}" "${{ steps.meta.outputs.path }}" \
+            --repo "$GITHUB_REPOSITORY" --clobber
 
       - name: Upload .ipa artifact
         uses: actions/upload-artifact@v4
