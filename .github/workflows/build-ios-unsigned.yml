@@ -128,6 +128,11 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3   # composeApp applies AGP; sdk.dir/ANDROID_HOME needed at configure time
+        with:
+          # Same fix as release-mobile.yml: the default "tools platform-tools" packages list
+          # fails on `sdkmanager tools` (Google removed the legacy SDK Tools package from the
+          # repo) — this macOS runner hit the identical failure this step never had before.
+          packages: platform-tools
 
       - name: Provision app config + select iOS flavour
         env:
