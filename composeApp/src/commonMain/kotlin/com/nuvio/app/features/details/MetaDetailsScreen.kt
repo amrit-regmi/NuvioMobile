@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CheckCircleOutline
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.CircularProgressIndicator
@@ -197,6 +198,7 @@ fun MetaDetailsScreen(
     var pickerMembership by remember(type, id) { mutableStateOf<Map<String, Boolean>>(emptyMap()) }
     var pickerPending by remember(type, id) { mutableStateOf(false) }
     var pickerError by remember(type, id) { mutableStateOf<String?>(null) }
+    var showSharePicker by remember(type, id) { mutableStateOf(false) }
     var episodeImdbRatings by remember(type, id) { mutableStateOf<Map<Pair<Int, Int>, Double>>(emptyMap()) }
     var deferredMetaWorkAllowed by remember(type, id) { mutableStateOf(false) }
 
@@ -877,6 +879,7 @@ fun MetaDetailsScreen(
                                 onSaveClick = toggleSaved,
                                 onSaveLongClick = openLibraryListPicker,
                                 onWatchedClick = toggleWatched,
+                                onRecommendClick = { showSharePicker = true },
                                 showManualPlayOption = showManualPlayOption,
                                 preferredEpisodeSeasonNumber = seriesAction?.seasonNumber,
                                 preferredEpisodeNumber = seriesAction?.episodeNumber,
@@ -1177,6 +1180,14 @@ fun MetaDetailsScreen(
                             },
                         )
 
+                        if (showSharePicker) {
+                            com.nuvio.app.features.shares.ShareTargetPicker(
+                                item = metaPreview,
+                                addonBaseUrl = meta.toLibraryItem(savedAtEpochMs = 0L).addonBaseUrl,
+                                onDismiss = { showSharePicker = false },
+                            )
+                        }
+
                         selectedComment?.let { comment ->
                             val commentIndex = comments.indexOfFirst { it.id == comment.id }.coerceAtLeast(0)
                             CommentDetailSheet(
@@ -1328,6 +1339,7 @@ private fun LazyListScope.configuredMetaSectionItems(
     onSaveClick: () -> Unit,
     onSaveLongClick: (() -> Unit)?,
     onWatchedClick: () -> Unit,
+    onRecommendClick: () -> Unit,
     showManualPlayOption: Boolean,
     preferredEpisodeSeasonNumber: Int?,
     preferredEpisodeNumber: Int?,
@@ -1403,6 +1415,7 @@ private fun LazyListScope.configuredMetaSectionItems(
                     onSaveClick = onSaveClick,
                     onSaveLongClick = onSaveLongClick,
                     onWatchedClick = onWatchedClick,
+                    onRecommendClick = onRecommendClick,
                     showManualPlayOption = showManualPlayOption,
                     preferredEpisodeSeasonNumber = preferredEpisodeSeasonNumber,
                     preferredEpisodeNumber = preferredEpisodeNumber,
@@ -1551,6 +1564,7 @@ private fun ConfiguredMetaSections(
     onSaveClick: () -> Unit,
     onSaveLongClick: (() -> Unit)?,
     onWatchedClick: () -> Unit,
+    onRecommendClick: () -> Unit,
     showManualPlayOption: Boolean,
     preferredEpisodeSeasonNumber: Int?,
     preferredEpisodeNumber: Int?,
@@ -1661,7 +1675,12 @@ private fun ConfiguredMetaSections(
                     onClick = onSaveClick,
                     onLongClick = onSaveLongClick,
                 )
-                val secondaryActions = listOfNotNull(watchedAction, savedAction)
+                val recommendAction = DetailSecondaryAction(
+                    label = stringResource(Res.string.shares_recommend_to_action),
+                    icon = Icons.Default.Share,
+                    onClick = onRecommendClick,
+                )
+                val secondaryActions = listOfNotNull(watchedAction, savedAction, recommendAction)
 
                 // Resume polling if this title is the app-scope active download (e.g. after the
                 // user navigated away and came back). No-op if already polling or not active.

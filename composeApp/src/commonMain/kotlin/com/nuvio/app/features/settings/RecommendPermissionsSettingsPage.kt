@@ -95,9 +95,11 @@ private fun RecommendPermissionsSettingsBody(isTablet: Boolean) {
         title = stringResource(Res.string.settings_shares_section_allowed),
         isTablet = isTablet,
         actions = {
-            IconButton(onClick = { showRosterPicker = true }) {
-                Icon(imageVector = Icons.Rounded.Add, contentDescription = stringResource(Res.string.settings_shares_add_action))
-            }
+            com.nuvio.app.core.ui.NuvioIconActionButton(
+                icon = Icons.Rounded.Add,
+                contentDescription = stringResource(Res.string.settings_shares_add_action),
+                onClick = { showRosterPicker = true },
+            )
         },
     ) {
         SettingsGroup(isTablet = isTablet) {
