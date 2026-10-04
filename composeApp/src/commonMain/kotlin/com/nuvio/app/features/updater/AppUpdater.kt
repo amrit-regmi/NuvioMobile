@@ -166,7 +166,16 @@ private object AppUpdaterRepository {
         }
 
         val releases = appUpdaterJson.decodeFromString<List<GitHubReleaseDto>>(response.body)
-        val release = releases.firstOrNull { it.matchesRequestedChannel() && !it.draft && !it.prerelease }
+        // NOTE: do NOT exclude prerelease here. This fork's entire release stream has
+        // been beta-only since v1.0.14 (release-mobile.yml always passes
+        // -f prerelease=true; there is no parallel stable track being maintained) — the
+        // last non-prerelease is v1.0.13 from 2026-07-19. Excluding prerelease meant the
+        // updater permanently compared against that stale v1.0.13 and NEVER found an
+        // update, no matter how many betas (v1.0.14..v1.0.24+) got published: "stuck on
+        // an old beta, check for updates says no updates found" for every user on this
+        // channel. GitHub returns releases newest-first, so firstOrNull here is still
+        // the most recent matching-channel release.
+        val release = releases.firstOrNull { it.matchesRequestedChannel() && !it.draft }
             ?: throw NoChannelReleaseException()
 
         val tag = release.tagName?.takeIf { it.isNotBlank() }
