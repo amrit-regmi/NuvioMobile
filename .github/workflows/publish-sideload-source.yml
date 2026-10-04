@@ -1,0 +1,41 @@
+name: Publish SideStore source
+
+# Regenerates source.json (the SideStore/AltStore source) from the .ipa assets attached to
+# GitHub Releases and force-pushes it, with the app icons, to the orphan `sideload-source`
+# branch. SideStore reads it from:
+#   https://raw.githubusercontent.com/amrit-regmi/NuvioMobile/sideload-source/source.json
+# Apps listed are configured in .github/sideload-source.json.
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+concurrency:
+  group: sideload-source
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write          # push the sideload-source branch
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Generate source.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 .github/scripts/gen_sideload_source.py "$RUNNER_TEMP/site"
+
+      - name: Push to sideload-source branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd "$RUNNER_TEMP/site"
+          git init -q -b sideload-source
+          git add -A
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -qm "source.json for ${GITHUB_SHA::8}"
+          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" sideload-source
