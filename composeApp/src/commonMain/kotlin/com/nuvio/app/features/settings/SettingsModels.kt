@@ -163,8 +163,8 @@ internal enum class SettingsPage(
     ),
     Shares(
         titleRes = Res.string.compose_settings_page_shares,
-        category = SettingsCategory.Account,
-        parentPage = Root,
+        category = SettingsCategory.General,
+        parentPage = ContentDiscovery,
     ),
 }
 

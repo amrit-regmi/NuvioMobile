@@ -12,6 +12,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.jsonObject
 
@@ -164,20 +165,20 @@ object SharesApi {
         addonBaseUrl: String?,
     ): Boolean {
         val payload = buildMap<String, JsonElement> {
-            put("recipient_user_id", jsonString(recipientUserId))
-            put("content_id", jsonString(item.id))
-            put("content_type", jsonString(item.type))
-            put("name", jsonString(item.name))
-            item.poster?.let { put("poster", jsonString(it)) }
-            item.banner?.let { put("background", jsonString(it)) }
-            item.logo?.let { put("logo", jsonString(it)) }
-            item.description?.let { put("description", jsonString(it)) }
-            item.releaseInfo?.let { put("release_info", jsonString(it)) }
-            item.imdbRating?.let { put("imdb_rating", jsonString(it)) }
+            put("recipient_user_id", JsonPrimitive(recipientUserId))
+            put("content_id", JsonPrimitive(item.id))
+            put("content_type", JsonPrimitive(item.type))
+            put("name", JsonPrimitive(item.name))
+            item.poster?.let { put("poster", JsonPrimitive(it)) }
+            item.banner?.let { put("background", JsonPrimitive(it)) }
+            item.logo?.let { put("logo", JsonPrimitive(it)) }
+            item.description?.let { put("description", JsonPrimitive(it)) }
+            item.releaseInfo?.let { put("release_info", JsonPrimitive(it)) }
+            item.imdbRating?.let { put("imdb_rating", JsonPrimitive(it)) }
             if (item.genres.isNotEmpty()) {
-                put("genres", JsonArray(item.genres.map { jsonString(it) }))
+                put("genres", JsonArray(item.genres.map { JsonPrimitive(it) }))
             }
-            addonBaseUrl?.let { put("addon_base_url", jsonString(it)) }
+            addonBaseUrl?.let { put("addon_base_url", JsonPrimitive(it)) }
         }
         val body = JsonObject(payload).toString()
         return postJson(sharesUrl(""), body)

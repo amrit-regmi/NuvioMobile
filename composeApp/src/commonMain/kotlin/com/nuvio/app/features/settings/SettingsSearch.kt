@@ -263,7 +263,7 @@ internal fun settingsSearchEntries(
         key = "recommend shares",
         title = stringResource(Res.string.compose_settings_page_shares),
         description = stringResource(Res.string.compose_settings_root_shares_description),
-        category = accountCategory,
+        category = generalCategory,
         icon = Icons.Rounded.Share,
     )
     if (supportersContributorsPageEnabled) {

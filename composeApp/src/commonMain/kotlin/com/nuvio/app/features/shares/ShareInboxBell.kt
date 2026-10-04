@@ -49,6 +49,7 @@ import com.nuvio.app.features.library.LibraryItem
 import com.nuvio.app.features.library.LibraryRepository
 import kotlinx.coroutines.launch
 import nuvio.composeapp.generated.resources.Res
+import nuvio.composeapp.generated.resources.shares_add_to_watchlist
 import nuvio.composeapp.generated.resources.shares_added_to_watchlist
 import nuvio.composeapp.generated.resources.shares_allow
 import nuvio.composeapp.generated.resources.shares_deny

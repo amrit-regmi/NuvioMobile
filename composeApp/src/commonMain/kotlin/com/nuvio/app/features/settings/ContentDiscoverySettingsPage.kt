@@ -5,6 +5,8 @@ import com.nuvio.app.core.build.AppFeaturePolicy
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.compose_settings_page_addons
 import nuvio.composeapp.generated.resources.compose_settings_page_plugins
+import nuvio.composeapp.generated.resources.compose_settings_page_shares
+import nuvio.composeapp.generated.resources.compose_settings_root_shares_description
 import nuvio.composeapp.generated.resources.settings_content_discovery_addons_description
 import nuvio.composeapp.generated.resources.settings_content_discovery_addons_description_appstore
 import nuvio.composeapp.generated.resources.settings_content_discovery_plugins_description
@@ -16,6 +18,7 @@ internal fun LazyListScope.contentDiscoveryContent(
     showPluginsEntry: Boolean,
     onAddonsClick: () -> Unit,
     onPluginsClick: () -> Unit,
+    onSharesClick: () -> Unit,
 ) {
     item {
         SettingsSection(
@@ -43,6 +46,12 @@ internal fun LazyListScope.contentDiscoveryContent(
                         onClick = onPluginsClick,
                     )
                 }
+                SettingsNavigationRow(
+                    title = stringResource(Res.string.compose_settings_page_shares),
+                    description = stringResource(Res.string.compose_settings_root_shares_description),
+                    isTablet = isTablet,
+                    onClick = onSharesClick,
+                )
             }
         }
     }
