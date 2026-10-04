@@ -217,8 +217,17 @@ fun StreamsScreen(
     // to the title, so it cancels the moment the displayed title/episode changes. Only
     // runs when a scrape is actually running; a genuinely empty/covered/unreleased title
     // settles to the empty state and this loop exits at once.
+    //
+    // budgetMs is a SAFETY CEILING, not the expected wait: the loop already exits the
+    // moment the backend's latest response stops signalling "still scraping" (the
+    // `!state.scrapePending` branch below), which happens well before this in the common
+    // case. The backend never runs two concurrent scrapes for the same title/episode
+    // (its herd guard makes a re-request either a no-op or a wait on the SAME in-flight
+    // scrape, never a second one), so there's no cost to this being generous — it's set
+    // above the backend's own hard scrape ceiling (debrid_ingest_live.py's subprocess is
+    // force-killed at 300s) so a genuinely slow-but-working scrape is never cut off early.
     LaunchedEffect(type, videoId, seasonNumber, episodeNumber, manualSelection) {
-        val budgetMs = 75_000L
+        val budgetMs = 320_000L
         val scrapeIntervalMs = 4_000L
         val settleTickMs = 500L
         var elapsedMs = 0L
