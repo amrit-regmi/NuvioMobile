@@ -15,6 +15,7 @@ import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.People
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Style
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.MaterialTheme
@@ -35,6 +36,8 @@ import nuvio.composeapp.generated.resources.settings_builtin_providers_descripti
 import nuvio.composeapp.generated.resources.compose_settings_page_licenses_attributions
 import nuvio.composeapp.generated.resources.compose_settings_page_notifications
 import nuvio.composeapp.generated.resources.compose_settings_page_playback
+import nuvio.composeapp.generated.resources.compose_settings_page_shares
+import nuvio.composeapp.generated.resources.compose_settings_root_shares_description
 import nuvio.composeapp.generated.resources.compose_settings_page_streams
 import nuvio.composeapp.generated.resources.compose_settings_page_supporters_contributors
 import nuvio.composeapp.generated.resources.compose_settings_root_account_description
@@ -78,6 +81,7 @@ internal fun LazyListScope.settingsRootContent(
     onCheckForUpdatesClick: (() -> Unit)? = null,
     onDownloadsClick: () -> Unit,
     onAccountClick: () -> Unit,
+    onRecommendationsClick: () -> Unit = {},
     onSwitchProfileClick: (() -> Unit)? = null,
     showAccountSection: Boolean = true,
     showGeneralSection: Boolean = true,
@@ -108,6 +112,14 @@ internal fun LazyListScope.settingsRootContent(
                         icon = Icons.Rounded.AccountCircle,
                         isTablet = isTablet,
                         onClick = onAccountClick,
+                    )
+                    SettingsGroupDivider(isTablet = isTablet)
+                    SettingsNavigationRow(
+                        title = stringResource(Res.string.compose_settings_page_shares),
+                        description = stringResource(Res.string.compose_settings_root_shares_description),
+                        icon = Icons.Rounded.Share,
+                        isTablet = isTablet,
+                        onClick = onRecommendationsClick,
                     )
                     // Bug 4 (private-backend fork): the Trakt integration is removed from
                     // the user-facing settings, mirroring the TV app. The Trakt page/models

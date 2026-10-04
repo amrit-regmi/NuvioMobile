@@ -31,7 +31,11 @@ object BackendAuth {
      */
     fun authHeadersFor(url: String): Map<String, String> {
         if (!PrivateBackend.isBackendUrl(url)) return emptyMap()
-        val token = currentAccessToken() ?: return emptyMap()
-        return mapOf("Authorization" to "Bearer $token")
+        val headers = mutableMapOf<String, String>()
+        val token = currentAccessToken()
+        if (token != null) headers["Authorization"] = "Bearer $token"
+        PrivateBackend.deviceProfileId?.let { headers["X-Device-Id"] = it }
+        if (headers.isEmpty()) return emptyMap()
+        return headers
     }
 }

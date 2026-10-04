@@ -9,6 +9,7 @@ fun MainViewController() = ComposeUIViewController {
     // Private-backend fork: resolve our FastAPI base URL (default + persisted override)
     // before content clients are built.
     com.nuvio.app.core.network.PrivateBackend.init()
+    com.nuvio.app.core.device.DeviceIdentity.initIos()
     App()
 }.apply {
     view.backgroundColor = nuvioBackgroundColor

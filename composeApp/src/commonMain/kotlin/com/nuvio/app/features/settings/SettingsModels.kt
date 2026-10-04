@@ -27,6 +27,7 @@ import nuvio.composeapp.generated.resources.compose_settings_page_playback
 import nuvio.composeapp.generated.resources.compose_settings_page_plugins
 import nuvio.composeapp.generated.resources.compose_settings_page_poster_customization
 import nuvio.composeapp.generated.resources.compose_settings_page_root
+import nuvio.composeapp.generated.resources.compose_settings_page_shares
 import nuvio.composeapp.generated.resources.compose_settings_page_streams
 import nuvio.composeapp.generated.resources.compose_settings_page_supporters_contributors
 import nuvio.composeapp.generated.resources.compose_settings_page_tmdb_enrichment
@@ -158,6 +159,11 @@ internal enum class SettingsPage(
     BuiltInProviders(
         titleRes = Res.string.settings_page_builtin_providers,
         category = SettingsCategory.General,
+        parentPage = Root,
+    ),
+    Shares(
+        titleRes = Res.string.compose_settings_page_shares,
+        category = SettingsCategory.Account,
         parentPage = Root,
     ),
 }

@@ -27,6 +27,7 @@ import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.People
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Style
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.Icon
@@ -256,6 +257,14 @@ internal fun settingsSearchEntries(
         title = notificationsPage,
         description = stringResource(Res.string.compose_settings_root_notifications_description),
         icon = Icons.Rounded.Notifications,
+    )
+    addPage(
+        page = SettingsPage.Shares,
+        key = "recommend shares",
+        title = stringResource(Res.string.compose_settings_page_shares),
+        description = stringResource(Res.string.compose_settings_root_shares_description),
+        category = accountCategory,
+        icon = Icons.Rounded.Share,
     )
     if (supportersContributorsPageEnabled) {
         addPage(

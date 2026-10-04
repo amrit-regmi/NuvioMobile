@@ -174,6 +174,8 @@ import com.nuvio.app.features.profiles.ProfileSwitcherTab
 import com.nuvio.app.features.profiles.parseHexColor
 import com.nuvio.app.features.profiles.profileAvatarImageUrl
 import com.nuvio.app.features.search.SearchScreen
+import com.nuvio.app.features.shares.ShareInboxRepository
+import com.nuvio.app.features.shares.ShareTargetPicker
 import com.nuvio.app.features.settings.SettingsScreen
 import com.nuvio.app.features.settings.HomescreenSettingsScreen
 import com.nuvio.app.features.settings.MetaScreenSettingsScreen
@@ -469,6 +471,18 @@ fun App() {
             AvatarRepository.fetchAvatars()
         }
 
+        // "Recommend to..." inbox: periodic poll (ShareInboxRepository.ensureStarted) plus an
+        // immediate refresh on app foreground, mirroring AppForegroundMonitor's other consumers
+        // above. Push notifications (when wired) just make this feel faster, not "the" delivery.
+        LaunchedEffect(Unit) {
+            ShareInboxRepository.ensureStarted()
+        }
+        LaunchedEffect(Unit) {
+            AppForegroundMonitor.events().collect {
+                ShareInboxRepository.refreshNow()
+            }
+        }
+
         val authState by AuthRepository.state.collectAsStateWithLifecycle()
         val profileState by ProfileRepository.state.collectAsStateWithLifecycle()
         val profileAvatars by AvatarRepository.avatars.collectAsStateWithLifecycle()
@@ -743,6 +757,7 @@ private fun MainAppContent(
         val liquidGlassNativeTabBarSupported = remember { isLiquidGlassNativeTabBarSupported() }
         var showExitConfirmation by rememberSaveable { mutableStateOf(false) }
         var selectedPosterActionTarget by remember { mutableStateOf<PosterActionTarget?>(null) }
+        var shareTargetPickerFor by remember { mutableStateOf<PosterActionTarget?>(null) }
         var selectedContinueWatchingForActions by remember { mutableStateOf<ContinueWatchingItem?>(null) }
         var requestedSettingsPageName by rememberSaveable { mutableStateOf<String?>(null) }
         var showLibraryListPicker by remember { mutableStateOf(false) }
@@ -3032,7 +3047,18 @@ private fun MainAppContent(
                         }
                     }
                 },
+                onRecommend = {
+                    selectedPosterActionTarget?.let { target -> shareTargetPickerFor = target }
+                },
             )
+
+            shareTargetPickerFor?.preview?.let { preview ->
+                ShareTargetPicker(
+                    item = preview,
+                    addonBaseUrl = shareTargetPickerFor?.libraryItem?.addonBaseUrl,
+                    onDismiss = { shareTargetPickerFor = null },
+                )
+            }
 
             NuvioContinueWatchingActionSheet(
                 item = selectedContinueWatchingForActions,

@@ -1,8 +1,11 @@
 package com.nuvio.app.features.home
 
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -10,6 +13,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -73,6 +77,7 @@ import com.nuvio.app.features.watching.domain.WatchingContentRef
 import com.nuvio.app.features.watching.domain.isReleasedBy
 import com.nuvio.app.features.collection.CollectionRepository
 import com.nuvio.app.features.profiles.ProfileRepository
+import com.nuvio.app.features.shares.ShareInboxBell
 import com.nuvio.app.features.home.components.HomeCollectionRowSection
 import com.nuvio.app.features.watchprogress.ContinueWatchingSectionStyle
 import kotlinx.coroutines.Dispatchers
@@ -901,6 +906,18 @@ fun HomeScreen(
                 }
             }
         }
+
+        // "Recommend to..." inbox bell — net new, no existing home top bar to hook into (see
+        // the parallel-swinging-flurry plan). Self-contained overlay, positioned below the
+        // status bar; owns its own sheet state via ShareInboxRepository.
+        ShareInboxBell(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(
+                    top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 4.dp,
+                    end = 4.dp,
+                ),
+        )
     }
 }
 

@@ -556,6 +556,7 @@ private fun MobileSettingsScreen(
                             onCheckForUpdatesClick = onCheckForUpdatesClick,
                             onDownloadsClick = onDownloadsClick,
                             onAccountClick = onAccountClick,
+                            onRecommendationsClick = { onPageChange(SettingsPage.Shares) },
                             onSwitchProfileClick = onSwitchProfile,
                             showSupportersContributorsPage = AppFeaturePolicy.supportersContributorsPageEnabled,
                         )
@@ -625,6 +626,9 @@ private fun MobileSettingsScreen(
                 SettingsPage.Notifications -> notificationsSettingsContent(
                     isTablet = false,
                     uiState = episodeReleaseNotificationsUiState,
+                )
+                SettingsPage.Shares -> recommendPermissionsSettingsContent(
+                    isTablet = false,
                 )
                 SettingsPage.ContinueWatching -> continueWatchingSettingsContent(
                     isTablet = false,
@@ -958,6 +962,7 @@ private fun TabletSettingsScreen(
                                 onCheckForUpdatesClick = onCheckForUpdatesClick,
                                 onDownloadsClick = onDownloadsClick,
                                 onAccountClick = { openInlinePage(SettingsPage.Account) },
+                                onRecommendationsClick = { openInlinePage(SettingsPage.Shares) },
                                 onSwitchProfileClick = onSwitchProfile,
                                 showAccountSection = activeCategory == SettingsCategory.Account,
                                 showGeneralSection = activeCategory == SettingsCategory.General,
@@ -1031,6 +1036,9 @@ private fun TabletSettingsScreen(
                     SettingsPage.Notifications -> notificationsSettingsContent(
                         isTablet = true,
                         uiState = episodeReleaseNotificationsUiState,
+                    )
+                    SettingsPage.Shares -> recommendPermissionsSettingsContent(
+                        isTablet = true,
                     )
                     SettingsPage.ContinueWatching -> continueWatchingSettingsContent(
                         isTablet = true,

@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CheckCircleOutline
+import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -43,6 +44,7 @@ import nuvio.composeapp.generated.resources.hero_add_to_library
 import nuvio.composeapp.generated.resources.hero_mark_unwatched
 import nuvio.composeapp.generated.resources.hero_mark_watched
 import nuvio.composeapp.generated.resources.hero_remove_from_library
+import nuvio.composeapp.generated.resources.shares_recommend_to_action
 import org.jetbrains.compose.resources.stringResource
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -54,6 +56,7 @@ fun NuvioPosterActionSheet(
     onDismiss: () -> Unit,
     onToggleLibrary: () -> Unit,
     onToggleWatched: () -> Unit,
+    onRecommend: (() -> Unit)? = null,
 ) {
     if (item == null) return
     val tokens = MaterialTheme.nuvio
@@ -113,6 +116,22 @@ fun NuvioPosterActionSheet(
                     }
                 },
             )
+            if (onRecommend != null) {
+                NuvioBottomSheetDivider()
+                NuvioBottomSheetActionRow(
+                    icon = Icons.Rounded.Share,
+                    title = stringResource(Res.string.shares_recommend_to_action),
+                    onClick = {
+                        coroutineScope.launch {
+                            dismissNuvioBottomSheet(
+                                sheetState = sheetState,
+                                onDismiss = onDismiss,
+                            )
+                        }
+                        onRecommend()
+                    },
+                )
+            }
         }
     }
 }
