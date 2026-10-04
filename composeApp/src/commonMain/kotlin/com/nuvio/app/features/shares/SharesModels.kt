@@ -41,7 +41,7 @@ data class IncomingPermissionRequestDto(
  * `/shares/permissions/granted` (source-side, populates the SENDER picker). The Settings page
  * ("list of allowed sources + alias" + "Pending outgoing requests") needs the requester-side
  * view, so this client assumes a new `GET /shares/permissions/mine` endpoint, following the
- * same `/shares/permissions/*` naming convention. Flagged for the backend implementer.
+ * same `/shares/permissions` naming convention. Flagged for the backend implementer.
  */
 @Serializable
 data class MyPermissionRequestDto(
