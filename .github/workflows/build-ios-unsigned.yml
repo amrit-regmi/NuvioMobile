@@ -58,6 +58,8 @@ jobs:
     # working set fits 7GB comfortably because it skips the memory-heavy release
     # LLVM optimization that OOM-killed the Release compile here.
     runs-on: macos-15
+    permissions:
+      contents: write          # attach the .ipa to a release (gh release upload)
     env:
       DIST: ${{ inputs.distribution || 'full' }}   # 'full' on push events (no inputs)
     steps:
