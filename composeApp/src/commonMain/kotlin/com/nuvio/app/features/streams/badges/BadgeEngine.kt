@@ -11,6 +11,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import nuvio.composeapp.generated.resources.Res
 import org.jetbrains.compose.resources.decodeToImageBitmap
+import kotlin.concurrent.Volatile
 
 /**
  * Local (bundled) "Elite-Badges" logo engine for the STREAM PICKER rows.
