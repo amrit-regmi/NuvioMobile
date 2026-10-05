@@ -914,7 +914,14 @@ fun HomeScreen(
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .padding(
-                    top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 4.dp,
+                    // Some devices/windows report a zero statusBars inset here even though the
+                    // real status bar is still drawn (edge-to-edge not fully consumed down to
+                    // this composable) — coerce to a sane minimum so the bell never sits flush
+                    // against the true top edge where it reads as clipped/missing.
+                    top = maxOf(
+                        WindowInsets.statusBars.asPaddingValues().calculateTopPadding(),
+                        24.dp,
+                    ) + 4.dp,
                     end = 4.dp,
                 ),
         )
