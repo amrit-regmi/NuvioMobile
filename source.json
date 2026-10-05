@@ -1,0 +1,75 @@
+{
+  "name": "amrit-regmi apps",
+  "identifier": "io.github.amrit-regmi.sideload",
+  "sourceURL": "https://raw.githubusercontent.com/amrit-regmi/NuvioMobile/sideload-source/source.json",
+  "apps": [
+    {
+      "name": "CineX",
+      "bundleIdentifier": "com.netflix.ninjax",
+      "developerName": "amrit-regmi",
+      "subtitle": "Private streaming client",
+      "localizedDescription": "CineX \u2014 private streaming client. Unsigned CI build, re-signed on device by SideStore.",
+      "iconURL": "https://raw.githubusercontent.com/amrit-regmi/NuvioMobile/sideload-source/com.netflix.ninjax.png",
+      "tintColor": "1e1e1e",
+      "category": "entertainment",
+      "screenshotURLs": [],
+      "appPermissions": {
+        "entitlements": [],
+        "privacy": {}
+      },
+      "versions": [
+        {
+          "version": "1.0.30-beta",
+          "buildVersion": "131",
+          "date": "2026-10-05T10:04:08Z",
+          "localizedDescription": "**Full Changelog**: https://github.com/amrit-regmi/NuvioMobile/compare/v1.0.12...v1.0.30-beta",
+          "downloadURL": "https://github.com/amrit-regmi/NuvioMobile/releases/download/v1.0.30-beta/CineX-ios-v1.0.30-beta-full-unsigned.ipa",
+          "size": 46362220,
+          "minOSVersion": "16.1"
+        },
+        {
+          "version": "1.0.29-beta",
+          "buildVersion": "130",
+          "date": "2026-10-05T07:43:05Z",
+          "localizedDescription": "**Full Changelog**: https://github.com/amrit-regmi/NuvioMobile/compare/v1.0.12...v1.0.29-beta",
+          "downloadURL": "https://github.com/amrit-regmi/NuvioMobile/releases/download/v1.0.29-beta/CineX-ios-v1.0.29-beta-full-unsigned.ipa",
+          "size": 46334914,
+          "minOSVersion": "16.1"
+        },
+        {
+          "version": "1.0.28-beta",
+          "buildVersion": "129",
+          "date": "2026-10-05T05:32:36Z",
+          "localizedDescription": "**Full Changelog**: https://github.com/amrit-regmi/NuvioMobile/compare/v1.0.12...v1.0.28-beta",
+          "downloadURL": "https://github.com/amrit-regmi/NuvioMobile/releases/download/v1.0.28-beta/CineX-ios-v1.0.28-beta-full-unsigned.ipa",
+          "size": 46326951,
+          "minOSVersion": "16.1"
+        },
+        {
+          "version": "1.0.27-beta",
+          "buildVersion": "128",
+          "date": "2026-10-04T19:22:23Z",
+          "localizedDescription": "**Full Changelog**: https://github.com/amrit-regmi/NuvioMobile/compare/v1.0.12...v1.0.27-beta",
+          "downloadURL": "https://github.com/amrit-regmi/NuvioMobile/releases/download/v1.0.27-beta/CineX-ios-v1.0.27-beta-full-unsigned.ipa",
+          "size": 46327477,
+          "minOSVersion": "16.1"
+        },
+        {
+          "version": "1.0.26-beta",
+          "buildVersion": "127",
+          "date": "2026-10-04T18:26:01Z",
+          "localizedDescription": "**Full Changelog**: https://github.com/amrit-regmi/NuvioMobile/compare/v1.0.12...v1.0.26-beta",
+          "downloadURL": "https://github.com/amrit-regmi/NuvioMobile/releases/download/v1.0.26-beta/CineX-ios-v1.0.26-beta-full-unsigned.ipa",
+          "size": 46332896,
+          "minOSVersion": "16.1"
+        }
+      ],
+      "version": "1.0.30-beta",
+      "versionDate": "2026-10-05T10:04:08Z",
+      "versionDescription": "**Full Changelog**: https://github.com/amrit-regmi/NuvioMobile/compare/v1.0.12...v1.0.30-beta",
+      "downloadURL": "https://github.com/amrit-regmi/NuvioMobile/releases/download/v1.0.30-beta/CineX-ios-v1.0.30-beta-full-unsigned.ipa",
+      "size": 46362220
+    }
+  ],
+  "news": []
+}
