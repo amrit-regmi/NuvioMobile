@@ -148,6 +148,7 @@ import com.nuvio.app.features.library.LibrarySourceMode
 import com.nuvio.app.features.library.LibraryScreen
 import com.nuvio.app.features.library.toLibraryItem
 import com.nuvio.app.features.library.toMetaPreview
+import com.nuvio.app.features.notifications.EpisodeReleaseAlertsCenter
 import com.nuvio.app.features.notifications.EpisodeReleaseNotificationsRepository
 import com.nuvio.app.features.p2p.P2pConsentDialog
 import com.nuvio.app.features.p2p.P2pSettingsRepository
@@ -474,12 +475,18 @@ fun App() {
         // "Recommend to..." inbox: periodic poll (ShareInboxRepository.ensureStarted) plus an
         // immediate refresh on app foreground, mirroring AppForegroundMonitor's other consumers
         // above. Push notifications (when wired) just make this feel faster, not "the" delivery.
+        //
+        // EpisodeReleaseAlertsCenter.reconcile() rides the same foreground hook: it has no
+        // fire-time callback on either platform for a *local* notification, so "what fired" is
+        // reconstructed here instead. Both feed the one unified bell (ShareInboxBell).
         LaunchedEffect(Unit) {
             ShareInboxRepository.ensureStarted()
+            EpisodeReleaseAlertsCenter.reconcile()
         }
         LaunchedEffect(Unit) {
             AppForegroundMonitor.events().collect {
                 ShareInboxRepository.refreshNow()
+                EpisodeReleaseAlertsCenter.reconcile()
             }
         }
 

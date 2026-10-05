@@ -27,6 +27,12 @@ data class EpisodeReleaseNotificationsUiState(
 internal data class StoredEpisodeReleaseNotificationsPayload(
     val enabled: Boolean = false,
     val followedShows: List<TrackedFollowedShow> = emptyList(),
+    // The full current schedule (replaced wholesale each refresh, not appended) plus which fired
+    // requestIds the user has already dismissed from the unified notification bell. See
+    // EpisodeReleaseAlertsCenter — these two fields let us reconstruct "what has fired" on any
+    // app foreground without needing a fire-time hook (unavailable on iOS for local notifications).
+    val scheduledRequests: List<EpisodeReleaseNotificationRequest> = emptyList(),
+    val dismissedFiredIds: Set<String> = emptySet(),
 )
 
 @Serializable

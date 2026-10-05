@@ -625,6 +625,7 @@ private fun MobileSettingsScreen(
                 SettingsPage.Notifications -> notificationsSettingsContent(
                     isTablet = false,
                     uiState = episodeReleaseNotificationsUiState,
+                    onSharesClick = { onPageChange(SettingsPage.Shares) },
                 )
                 SettingsPage.Shares -> recommendPermissionsSettingsContent(
                     isTablet = false,
@@ -649,7 +650,6 @@ private fun MobileSettingsScreen(
                     showPluginsEntry = AppFeaturePolicy.pluginsEnabled,
                     onAddonsClick = onAddonsClick,
                     onPluginsClick = onPluginsClick,
-                    onSharesClick = { onPageChange(SettingsPage.Shares) },
                 )
                 SettingsPage.Addons -> addonsSettingsContent()
                 SettingsPage.Plugins -> if (AppFeaturePolicy.pluginsEnabled) pluginsSettingsContent() else addonsSettingsContent()
@@ -1035,6 +1035,7 @@ private fun TabletSettingsScreen(
                     SettingsPage.Notifications -> notificationsSettingsContent(
                         isTablet = true,
                         uiState = episodeReleaseNotificationsUiState,
+                        onSharesClick = { openInlinePage(SettingsPage.Shares) },
                     )
                     SettingsPage.Shares -> recommendPermissionsSettingsContent(
                         isTablet = true,
@@ -1059,7 +1060,6 @@ private fun TabletSettingsScreen(
                         showPluginsEntry = AppFeaturePolicy.pluginsEnabled,
                         onAddonsClick = { openInlinePage(SettingsPage.Addons) },
                         onPluginsClick = { openInlinePage(SettingsPage.Plugins) },
-                        onSharesClick = { openInlinePage(SettingsPage.Shares) },
                     )
                     SettingsPage.Addons -> addonsSettingsContent()
                     SettingsPage.Plugins -> if (AppFeaturePolicy.pluginsEnabled) pluginsSettingsContent() else addonsSettingsContent()

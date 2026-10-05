@@ -52,6 +52,10 @@ object EpisodeReleaseNotificationsRepository {
     private var hasLoaded = false
     @Volatile
     private var trackedShowsByKey: Map<String, TrackedFollowedShow> = emptyMap()
+    @Volatile
+    private var lastScheduledRequests: List<EpisodeReleaseNotificationRequest> = emptyList()
+    @Volatile
+    private var dismissedFiredIds: Set<String> = emptySet()
 
     init {
         scope.launch {
@@ -88,6 +92,8 @@ object EpisodeReleaseNotificationsRepository {
     fun clearLocalState() {
         hasLoaded = false
         trackedShowsByKey = emptyMap()
+        lastScheduledRequests = emptyList()
+        dismissedFiredIds = emptySet()
         _uiState.value = EpisodeReleaseNotificationsUiState()
         scope.launch {
             runCatching { EpisodeReleaseNotificationPlatform.clearScheduledEpisodeReleaseNotifications() }
@@ -123,6 +129,7 @@ object EpisodeReleaseNotificationsRepository {
                     .onFailure { error ->
                         log.w { "Failed to clear episode release notifications: ${error.message}" }
                     }
+                lastScheduledRequests = emptyList()
                 _uiState.value = _uiState.value.copy(
                     isEnabled = false,
                     isLoading = false,
@@ -261,6 +268,8 @@ object EpisodeReleaseNotificationsRepository {
                 put(buildTrackedShowKey(trackedShow.contentType, trackedShow.contentId), trackedShow)
             }
         }
+        lastScheduledRequests = stored?.scheduledRequests.orEmpty()
+        dismissedFiredIds = stored?.dismissedFiredIds.orEmpty()
 
         _uiState.value = EpisodeReleaseNotificationsUiState(
             isEnabled = stored?.enabled ?: false,
@@ -279,9 +288,29 @@ object EpisodeReleaseNotificationsRepository {
                     enabled = _uiState.value.isEnabled,
                     followedShows = trackedShowsByKey.values
                         .sortedWith(compareBy(TrackedFollowedShow::contentType, TrackedFollowedShow::contentId)),
+                    scheduledRequests = lastScheduledRequests,
+                    dismissedFiredIds = dismissedFiredIds,
                 ),
             ),
         )
+    }
+
+    /** Snapshot for [EpisodeReleaseAlertsCenter]'s reconciliation. */
+    internal fun scheduledRequestsSnapshot(): List<EpisodeReleaseNotificationRequest> = lastScheduledRequests
+
+    /** Snapshot for [EpisodeReleaseAlertsCenter]'s reconciliation. */
+    internal fun dismissedFiredIdsSnapshot(): Set<String> = dismissedFiredIds
+
+    /** Whether the unified bell is even allowed to surface fired alerts right now. */
+    internal fun alertsEligible(): Boolean =
+        _uiState.value.isEnabled && _uiState.value.permissionGranted
+
+    /** Called by [EpisodeReleaseAlertsCenter.dismiss] — persists the dismissal and prunes any
+     * stale ids whose underlying request is no longer in the current schedule. */
+    internal fun markFiredAlertDismissed(requestId: String) {
+        val currentIds = lastScheduledRequests.mapTo(mutableSetOf()) { it.requestId }
+        dismissedFiredIds = (dismissedFiredIds + requestId).filterTo(mutableSetOf()) { it in currentIds }
+        persist()
     }
 
     private suspend fun syncAuthorizationState(refreshIfEnabled: Boolean) {
@@ -357,6 +386,8 @@ object EpisodeReleaseNotificationsRepository {
                     .onFailure { error ->
                         log.w { "Failed to clear scheduled episode release notifications: ${error.message}" }
                     }
+                lastScheduledRequests = emptyList()
+                persist()
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     permissionGranted = permissionGranted,
@@ -379,6 +410,8 @@ object EpisodeReleaseNotificationsRepository {
 
             if (trackedShowsByKey.isEmpty()) {
                 runCatching { EpisodeReleaseNotificationPlatform.clearScheduledEpisodeReleaseNotifications() }
+                lastScheduledRequests = emptyList()
+                persist()
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     scheduledCount = 0,
@@ -404,6 +437,9 @@ object EpisodeReleaseNotificationsRepository {
 
             runCatching {
                 EpisodeReleaseNotificationPlatform.scheduleEpisodeReleaseNotifications(requests)
+            }.onSuccess {
+                lastScheduledRequests = requests
+                persist()
             }.onFailure { error ->
                 log.e(error) { "Failed to schedule episode release notifications" }
             }

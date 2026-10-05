@@ -47,6 +47,8 @@ import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.features.home.PosterShape
 import com.nuvio.app.features.library.LibraryItem
 import com.nuvio.app.features.library.LibraryRepository
+import com.nuvio.app.features.notifications.EpisodeReleaseAlertsCenter
+import com.nuvio.app.features.notifications.FiredEpisodeAlert
 import kotlinx.coroutines.launch
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.shares_add_to_watchlist
@@ -61,15 +63,20 @@ import nuvio.composeapp.generated.resources.shares_sender_recommends
 import org.jetbrains.compose.resources.stringResource
 
 /**
- * Home top-bar "Recommend to..." inbox entry (net new — no existing precedent for a home
- * top bar in this codebase; see HomeScreen.kt). Self-contained: owns its own sheet-open state
- * and reads [ShareInboxRepository.uiState] directly, so it doesn't need threading through
- * HomeScreen's already-large parameter list.
+ * Home top-bar notification bell — aggregates TWO independent sources into one badge/sheet:
+ * the "Recommend to..." shares inbox ([ShareInboxRepository], server-polled) and fired episode
+ * release alerts ([EpisodeReleaseAlertsCenter], reconstructed client-side on foreground). They
+ * were originally two unrelated, separately-reachable features; this merge is purely at the
+ * presentation layer — neither repository knows about the other. Self-contained: owns its own
+ * sheet-open state, so it doesn't need threading through HomeScreen's already-large parameter
+ * list (see HomeScreen.kt for the sole call site).
  */
 @Composable
 fun ShareInboxBell(modifier: Modifier = Modifier) {
-    val uiState by ShareInboxRepository.uiState.collectAsStateWithLifecycle()
+    val sharesState by ShareInboxRepository.uiState.collectAsStateWithLifecycle()
+    val firedAlerts by EpisodeReleaseAlertsCenter.firedUnseen.collectAsStateWithLifecycle()
     var sheetOpen by remember { mutableStateOf(false) }
+    val totalBadgeCount = sharesState.badgeCount + firedAlerts.size
 
     Box(modifier = modifier) {
         IconButton(onClick = { sheetOpen = true }) {
@@ -79,7 +86,7 @@ fun ShareInboxBell(modifier: Modifier = Modifier) {
                 tint = MaterialTheme.colorScheme.onSurface,
             )
         }
-        if (uiState.badgeCount > 0) {
+        if (totalBadgeCount > 0) {
             Box(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
@@ -90,7 +97,7 @@ fun ShareInboxBell(modifier: Modifier = Modifier) {
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    text = if (uiState.badgeCount > 9) "9+" else uiState.badgeCount.toString(),
+                    text = if (totalBadgeCount > 9) "9+" else totalBadgeCount.toString(),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onError,
                 )
@@ -100,7 +107,8 @@ fun ShareInboxBell(modifier: Modifier = Modifier) {
 
     if (sheetOpen) {
         ShareInboxSheet(
-            items = uiState.items,
+            items = sharesState.items,
+            firedAlerts = firedAlerts,
             onDismiss = { sheetOpen = false },
         )
     }
@@ -110,6 +118,7 @@ fun ShareInboxBell(modifier: Modifier = Modifier) {
 @Composable
 private fun ShareInboxSheet(
     items: List<InboxItem>,
+    firedAlerts: List<FiredEpisodeAlert>,
     onDismiss: () -> Unit,
 ) {
     val tokens = MaterialTheme.nuvio
@@ -139,7 +148,7 @@ private fun ShareInboxSheet(
             )
             NuvioBottomSheetDivider()
 
-            if (items.isEmpty()) {
+            if (items.isEmpty() && firedAlerts.isEmpty()) {
                 Text(
                     text = stringResource(Res.string.shares_inbox_empty),
                     modifier = Modifier
@@ -167,6 +176,13 @@ private fun ShareInboxSheet(
                                 onDeny = { ShareInboxRepository.respondToPermissionRequest(item.id, allow = false) },
                             )
                         }
+                        NuvioBottomSheetDivider()
+                    }
+                    items(firedAlerts, key = { it.requestId }) { alert ->
+                        FiredEpisodeAlertRow(
+                            alert = alert,
+                            onDismiss = { EpisodeReleaseAlertsCenter.dismiss(alert.requestId) },
+                        )
                         NuvioBottomSheetDivider()
                     }
                 }
@@ -272,6 +288,63 @@ private fun PermissionRequestRow(
             }
             OutlinedButton(onClick = onDeny) {
                 Text(stringResource(Res.string.shares_deny))
+            }
+        }
+    }
+}
+
+@Composable
+private fun FiredEpisodeAlertRow(
+    alert: FiredEpisodeAlert,
+    onDismiss: () -> Unit,
+) {
+    val tokens = MaterialTheme.nuvio
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = tokens.spacing.screenHorizontal, vertical = 12.dp),
+    ) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(width = 48.dp, height = 68.dp)
+                    .clip(MaterialTheme.shapes.small)
+                    .background(tokens.colors.surfaceCard),
+            ) {
+                alert.backdropUrl?.let { backdrop ->
+                    AsyncImage(
+                        model = backdrop,
+                        contentDescription = alert.title,
+                        modifier = Modifier.fillMaxWidth().height(68.dp),
+                        contentScale = ContentScale.Crop,
+                    )
+                }
+            }
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = alert.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = tokens.colors.textPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = alert.body,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = tokens.colors.textMuted,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        Spacer()
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedButton(onClick = onDismiss) {
+                Text(stringResource(Res.string.shares_dismiss))
             }
         }
     }

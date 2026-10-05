@@ -17,6 +17,8 @@ import androidx.compose.ui.unit.dp
 import com.nuvio.app.features.notifications.EpisodeReleaseNotificationsRepository
 import com.nuvio.app.features.notifications.EpisodeReleaseNotificationsUiState
 import nuvio.composeapp.generated.resources.Res
+import nuvio.composeapp.generated.resources.compose_settings_page_shares
+import nuvio.composeapp.generated.resources.compose_settings_root_shares_description
 import nuvio.composeapp.generated.resources.settings_notifications_disabled_in_app
 import nuvio.composeapp.generated.resources.settings_notifications_episode_release_alerts
 import nuvio.composeapp.generated.resources.settings_notifications_episode_release_alerts_description
@@ -34,6 +36,7 @@ import org.jetbrains.compose.resources.stringResource
 internal fun LazyListScope.notificationsSettingsContent(
     isTablet: Boolean,
     uiState: EpisodeReleaseNotificationsUiState,
+    onSharesClick: () -> Unit,
 ) {
     item {
         SettingsSection(
@@ -48,6 +51,12 @@ internal fun LazyListScope.notificationsSettingsContent(
                     enabled = !uiState.isLoading,
                     isTablet = isTablet,
                     onCheckedChange = EpisodeReleaseNotificationsRepository::setEnabled,
+                )
+                SettingsNavigationRow(
+                    title = stringResource(Res.string.compose_settings_page_shares),
+                    description = stringResource(Res.string.compose_settings_root_shares_description),
+                    isTablet = isTablet,
+                    onClick = onSharesClick,
                 )
             }
         }
