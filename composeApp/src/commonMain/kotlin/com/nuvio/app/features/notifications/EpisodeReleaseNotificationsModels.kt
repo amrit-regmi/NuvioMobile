@@ -42,6 +42,7 @@ internal data class TrackedFollowedShow(
     val followedOnIsoDate: String,
 )
 
+@Serializable
 internal data class EpisodeReleaseNotificationRequest(
     val requestId: String,
     val notificationTitle: String,
