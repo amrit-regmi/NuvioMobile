@@ -1999,4 +1999,5 @@
     <string name="settings_shares_status_pending">Pending</string>
     <string name="settings_shares_status_allowed">Allowed</string>
     <string name="settings_shares_status_denied">Denied</string>
+    <string name="settings_shares_remove_action">Remove</string>
 </resources>

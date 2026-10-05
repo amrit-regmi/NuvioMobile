@@ -12,6 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -49,6 +50,7 @@ import nuvio.composeapp.generated.resources.settings_shares_add_action
 import nuvio.composeapp.generated.resources.settings_shares_alias_hint
 import nuvio.composeapp.generated.resources.settings_shares_empty_allowed
 import nuvio.composeapp.generated.resources.settings_shares_empty_pending
+import nuvio.composeapp.generated.resources.settings_shares_remove_action
 import nuvio.composeapp.generated.resources.settings_shares_request_failed
 import nuvio.composeapp.generated.resources.settings_shares_request_sent
 import nuvio.composeapp.generated.resources.settings_shares_roster_empty
@@ -134,6 +136,14 @@ private fun RecommendPermissionsSettingsBody(isTablet: Boolean) {
                             }
                         },
                         onCancelEdit = { editingAliasId = null },
+                        onRemove = {
+                            val id = row.id
+                            coroutineScope.launch {
+                                if (SharesApi.removePermission(id)) {
+                                    mine = mine.filterNot { it.id == id }
+                                }
+                            }
+                        },
                         isTablet = isTablet,
                     )
                     if (index != allowed.lastIndex) SettingsGroupDivider(isTablet = isTablet)
@@ -158,7 +168,18 @@ private fun RecommendPermissionsSettingsBody(isTablet: Boolean) {
                 )
             } else {
                 pending.forEachIndexed { index, row ->
-                    PendingRequestRow(row = row, isTablet = isTablet)
+                    PendingRequestRow(
+                        row = row,
+                        isTablet = isTablet,
+                        onRemove = {
+                            val id = row.id
+                            coroutineScope.launch {
+                                if (SharesApi.removePermission(id)) {
+                                    mine = mine.filterNot { it.id == id }
+                                }
+                            }
+                        },
+                    )
                     if (index != pending.lastIndex) SettingsGroupDivider(isTablet = isTablet)
                 }
             }
@@ -184,6 +205,7 @@ private fun AllowedSourceRow(
     onStartEdit: () -> Unit,
     onSaveAlias: () -> Unit,
     onCancelEdit: () -> Unit,
+    onRemove: () -> Unit,
     isTablet: Boolean,
 ) {
     val tokens = MaterialTheme.nuvio
@@ -237,12 +259,19 @@ private fun AllowedSourceRow(
             IconButton(onClick = onStartEdit) {
                 Icon(imageVector = Icons.Rounded.Edit, contentDescription = null, tint = tokens.colors.textMuted)
             }
+            IconButton(onClick = onRemove) {
+                Icon(
+                    imageVector = Icons.Rounded.Delete,
+                    contentDescription = stringResource(Res.string.settings_shares_remove_action),
+                    tint = tokens.colors.textMuted,
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun PendingRequestRow(row: MyPermissionRequestDto, isTablet: Boolean) {
+private fun PendingRequestRow(row: MyPermissionRequestDto, isTablet: Boolean, onRemove: () -> Unit) {
     val tokens = MaterialTheme.nuvio
     val horizontalPadding = if (isTablet) 20.dp else 16.dp
     val verticalPadding = if (isTablet) 16.dp else 14.dp
@@ -266,6 +295,13 @@ private fun PendingRequestRow(row: MyPermissionRequestDto, isTablet: Boolean) {
             style = MaterialTheme.typography.bodySmall,
             color = tokens.colors.textMuted,
         )
+        IconButton(onClick = onRemove) {
+            Icon(
+                imageVector = Icons.Rounded.Delete,
+                contentDescription = stringResource(Res.string.settings_shares_remove_action),
+                tint = tokens.colors.textMuted,
+            )
+        }
     }
 }
 

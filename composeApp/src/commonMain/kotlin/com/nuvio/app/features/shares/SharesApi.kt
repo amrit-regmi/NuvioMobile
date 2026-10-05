@@ -103,6 +103,17 @@ object SharesApi {
         }.getOrDefault(false)
     }
 
+    private suspend fun deleteJson(url: String): Boolean {
+        val headers = authHeaders(url) ?: return false
+        return runCatching {
+            val response = httpRequestRaw(method = "DELETE", url = url, headers = headers, body = "")
+            response.status in 200..299
+        }.onFailure { err ->
+            if (err is CancellationException) throw err
+            log.w(err) { "DELETE $url threw" }
+        }.getOrDefault(false)
+    }
+
     /** `GET /shares/roster` — full known-account roster minus caller + caller's siblings. */
     suspend fun fetchRoster(): List<RosterUserDto> {
         val element = getJson(sharesUrl("/roster")) ?: return emptyList()
@@ -153,6 +164,14 @@ object SharesApi {
     /** `PUT /shares/permissions/{id}/alias` body `{"alias": ...}`. */
     suspend fun updateAlias(id: String, alias: String): Boolean =
         putJson(sharesUrl("/permissions/${id.encodeSegment()}/alias"), """{"alias":${jsonString(alias)}}""")
+
+    /**
+     * `DELETE /shares/permissions/{id}` — remove a source from the caller's "Receive
+     * recommendations from" list (an allowed source, or a still-pending outgoing request).
+     * Unilateral on the requester's side, no approval needed from the source.
+     */
+    suspend fun removePermission(id: String): Boolean =
+        deleteJson(sharesUrl("/permissions/${id.encodeSegment()}"))
 
     /**
      * `POST /shares` — recommend [item] to [recipientUserId]. [addonBaseUrl] comes from the
